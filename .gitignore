@@ -1,0 +1,26 @@
+# Dependências
+node_modules/
+
+# Arquivos de Build/Compilação do TypeScript
+dist/
+build/
+
+# Variáveis de Ambiente
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs de Erro do NPM
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Arquivos temporários do Sistema Operacional
+.DS_Store
+Thumbs.db
+
+# Configurações locais da IDE (VS Code)
+.vscode/
+.idea/
