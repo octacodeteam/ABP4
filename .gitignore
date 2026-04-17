@@ -24,3 +24,8 @@ Thumbs.db
 # Configurações locais da IDE (VS Code)
 .vscode/
 .idea/
+
+# Ignora node_modules em qualquer lugar do projeto
+**/node_modules/
+**/dist/
+**/.env
