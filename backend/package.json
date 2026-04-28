@@ -1,13 +1,21 @@
 {
-  "name": "dispensador",
+  "name": "medcare-iot-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Backend Express para aplicativo de dispenser de remédios MedCare IoT",
+  "main": "dist/server.js",
   "scripts": {
-    "test": "echo \"Testes serão configurados em breve!\" && exit 0",
-    "build": "tsc"
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "echo \"Testes serão configurados em breve!\" && exit 0"
   },
-  "keywords": [],
+  "keywords": [
+    "iot",
+    "medicamentos",
+    "dispensador",
+    "express",
+    "typescript"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
