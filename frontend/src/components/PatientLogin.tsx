@@ -9,17 +9,9 @@ interface Props {
   onCaregiverLogin: () => void;
 }
 
-/**
- * PatientLogin Component: Minimalist login for elderly users.
- * Accessibility Features:
- * - Extremely simple layout to avoid cognitive overload.
- * - Large numeric inputs and buttons.
- * - High contrast and clear icons.
- * - Centered PIN input with large font size.
- */
 export default function PatientLogin({ onAuthenticated, onCaregiverLogin }: Props) {
-  const [phone, setPhone] = useState('11999999999');
-  const [pin, setPin] = useState('1234');
+  const [phone, setPhone] = useState('');
+  const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -44,7 +36,7 @@ export default function PatientLogin({ onAuthenticated, onCaregiverLogin }: Prop
           <UserCircle2 size={64} strokeWidth={1.5} />
         </div>
         <h1 className="text-4xl font-black text-app-text-primary tracking-tight">Área do Paciente</h1>
-        <p className="text-xl font-bold text-app-text-secondary opacity-70">Acesso simplificado por telefone e PIN</p>
+        <p className="text-xl font-bold text-app-text-secondary opacity-70">Acesso simplificado por telefone do cuidador e PIN</p>
       </header>
 
       <form className="w-full max-w-md space-y-8" onSubmit={handleSubmit}>
@@ -92,10 +84,6 @@ export default function PatientLogin({ onAuthenticated, onCaregiverLogin }: Prop
       <button onClick={onCaregiverLogin} className="pt-2 text-app-primary font-black text-xl hover:underline decoration-2 underline-offset-8 transition-all">
         Sou Cuidador (Acesso Completo)
       </button>
-
-      <div className="p-4 bg-slate-50 border border-app-border rounded-2xl text-sm font-bold text-app-text-secondary max-w-md text-center">
-        Acesso demo: telefone 11999999999 / PIN 1234
-      </div>
     </div>
   );
 }

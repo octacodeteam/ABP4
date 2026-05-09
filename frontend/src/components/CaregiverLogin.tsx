@@ -11,8 +11,8 @@ interface Props {
 }
 
 export default function CaregiverLogin({ onAuthenticated, onSignup, onPatientLogin }: Props) {
-  const [email, setEmail] = useState('cuidador@demo.com');
-  const [password, setPassword] = useState('123456');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -65,7 +65,7 @@ export default function CaregiverLogin({ onAuthenticated, onSignup, onPatientLog
             className="w-full h-16 px-5 bg-app-bg border-2 border-app-border rounded-2xl text-lg font-bold focus:border-app-primary outline-none transition-all"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="Mínimo 6 caracteres"
+            placeholder="Senha do cuidador"
           />
         </div>
 
@@ -88,10 +88,6 @@ export default function CaregiverLogin({ onAuthenticated, onSignup, onPatientLog
         <button onClick={onPatientLogin} className="p-4 border-2 border-app-border rounded-2xl font-black text-app-text-secondary hover:border-app-primary transition-all">
           Sou paciente
         </button>
-      </div>
-
-      <div className="p-4 bg-slate-50 border border-app-border rounded-2xl text-sm font-bold text-app-text-secondary">
-        Acesso demo: cuidador@demo.com / 123456
       </div>
     </div>
   );

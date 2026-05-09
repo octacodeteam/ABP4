@@ -1,99 +1,73 @@
-// src/server.ts
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
 const app = express();
+const prisma = new PrismaClient();
 const PORT = Number(process.env.PORT || 3001);
-const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data'));
-const DB_FILE = path.join(DATA_DIR, 'db.json');
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'troque-este-segredo-em-producao';
+const DEFAULT_DEVICE_TOKEN = process.env.DEFAULT_DEVICE_TOKEN || '123';
+const COMPARTMENTS_COUNT = 8;
+const MINUTES_PER_DAY = 24 * 60;
+const DEVICE_OFFLINE_AFTER_MINUTES = 5;
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 type Role = 'caregiver' | 'patient';
-type DoseStatus = 'pending' | 'taken' | 'missed';
-type AlertType = 'info' | 'warning' | 'danger';
-
-interface Caregiver {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  passwordHash: string;
-  createdAt: string;
-}
-
-interface Patient {
-  id: string;
-  caregiverId: string;
-  name: string;
-  relationship: string;
-  pinHash: string;
-  createdAt: string;
-}
-
-interface Medication {
-  id: string;
-  patientId: string;
-  name: string;
-  dosage: string;
-  firstDoseTime: string;
-  frequencyHours: number;
-  compartment: number;
-  isCritical: boolean;
-  createdAt: string;
-}
-
-interface PatientPreference {
-  patientId: string;
-  sleepTime: string;
-  wakeTime: string;
-  alarmVolume: number;
-}
-
-interface DispenseEvent {
-  id: string;
-  patientId: string;
-  medicationId: string | null;
-  name: string;
-  dosage: string;
-  compartment: number;
-  scheduledFor: string;
-  dispensedAt: string | null;
-  status: DoseStatus;
-  createdAt: string;
-}
-
-interface AlertItem {
-  id: string;
-  patientId: string;
-  type: AlertType;
-  title: string;
-  desc: string;
-  createdAt: string;
-  resolved: boolean;
-}
-
-interface Database {
-  caregivers: Caregiver[];
-  patients: Patient[];
-  medications: Medication[];
-  preferences: PatientPreference[];
-  events: DispenseEvent[];
-  alerts: AlertItem[];
-}
 
 interface AuthPayload {
   role: Role;
   caregiverId?: string;
   patientId?: string;
+}
+
+interface PublicMedication {
+  id: string;
+  patientId: string;
+  name: string;
+  dosage: string;
+  instructions: string | null;
+  firstDoseTime: string;
+  frequencyHours: number;
+  isCritical: boolean;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface PlanItem {
+  medicationId: string;
+  name: string;
+  dosage: string;
+  isCritical: boolean;
+}
+
+interface PlanSlot {
+  id: string;
+  compartment: number;
+  scheduledAt: string;
+  scheduledTime: string;
+  status: string;
+  items: PlanItem[];
+  itemsText: string;
+  critical: boolean;
+}
+
+interface PlanPreview {
+  fits: boolean;
+  maxCompartments: number;
+  requiredCompartments: number;
+  overflowCount: number;
+  cycleStart: string;
+  cycleEnd: string;
+  wakeTime: string;
+  slots: PlanSlot[];
+  warning: string | null;
 }
 
 declare global {
@@ -102,119 +76,6 @@ declare global {
       auth?: AuthPayload;
     }
   }
-}
-
-function createEmptyDb(): Database {
-  return {
-    caregivers: [],
-    patients: [],
-    medications: [],
-    preferences: [],
-    events: [],
-    alerts: [],
-  };
-}
-
-function ensureDbFile() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-
-  if (!fs.existsSync(DB_FILE)) {
-    const demoCaregiverId = crypto.randomUUID();
-    const demoPatientId = crypto.randomUUID();
-    const demoMedicationA = crypto.randomUUID();
-    const demoMedicationB = crypto.randomUUID();
-    const demoMedicationC = crypto.randomUUID();
-    const demoDb: Database = {
-      caregivers: [
-        {
-          id: demoCaregiverId,
-          name: 'Cuidador Demo',
-          email: 'cuidador@demo.com',
-          phone: '11999999999',
-          passwordHash: hashSecret('123456'),
-          createdAt: new Date().toISOString(),
-        },
-      ],
-      patients: [
-        {
-          id: demoPatientId,
-          caregiverId: demoCaregiverId,
-          name: 'Sr. Breno',
-          relationship: 'Pai',
-          pinHash: hashSecret('1234'),
-          createdAt: new Date().toISOString(),
-        },
-      ],
-      medications: [
-        {
-          id: demoMedicationA,
-          patientId: demoPatientId,
-          name: 'Losartana',
-          dosage: '50mg - 1 comprimido',
-          firstDoseTime: '08:00',
-          frequencyHours: 12,
-          compartment: 1,
-          isCritical: true,
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: demoMedicationB,
-          patientId: demoPatientId,
-          name: 'Vitamina D',
-          dosage: '1 cápsula',
-          firstDoseTime: '10:00',
-          frequencyHours: 24,
-          compartment: 2,
-          isCritical: false,
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: demoMedicationC,
-          patientId: demoPatientId,
-          name: 'Aspirina',
-          dosage: '100mg - 1 comprimido',
-          firstDoseTime: '18:30',
-          frequencyHours: 24,
-          compartment: 3,
-          isCritical: true,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-      preferences: [
-        {
-          patientId: demoPatientId,
-          sleepTime: '23:00',
-          wakeTime: '06:00',
-          alarmVolume: 80,
-        },
-      ],
-      events: [],
-      alerts: [
-        {
-          id: crypto.randomUUID(),
-          patientId: demoPatientId,
-          type: 'warning',
-          title: 'Capacidade Crítica',
-          desc: 'A caixa organizadora precisa ser conferida para garantir doses suficientes para o próximo ciclo.',
-          createdAt: new Date().toISOString(),
-          resolved: false,
-        },
-      ],
-    };
-    fs.writeFileSync(DB_FILE, JSON.stringify(demoDb, null, 2), 'utf-8');
-  }
-}
-
-function readDb(): Database {
-  ensureDbFile();
-  const raw = fs.readFileSync(DB_FILE, 'utf-8');
-  return { ...createEmptyDb(), ...JSON.parse(raw) };
-}
-
-function writeDb(db: Database) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
 }
 
 function normalizeEmail(email: string) {
@@ -235,6 +96,7 @@ function verifySecret(secret: string, storedHash: string) {
   const [salt, hash] = storedHash.split(':');
   if (!salt || !hash) return false;
   const candidate = crypto.pbkdf2Sync(secret, salt, 100000, 64, 'sha512').toString('hex');
+  if (hash.length !== candidate.length) return false;
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(candidate, 'hex'));
 }
 
@@ -251,16 +113,24 @@ function signToken(payload: AuthPayload) {
 function readToken(token: string): AuthPayload | null {
   const [body, signature] = token.split('.');
   if (!body || !signature) return null;
+
   const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(body).digest('base64url');
   if (signature.length !== expected.length) return null;
   if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+
   const parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf-8'));
   return { role: parsed.role, caregiverId: parsed.caregiverId, patientId: parsed.patientId };
+}
+
+function getRouteParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] || '';
+  return value || '';
 }
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+
   if (!token) {
     res.status(401).json({ message: 'Token ausente.' });
     return;
@@ -287,38 +157,34 @@ function requireCaregiver(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-function getRouteParam(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] || '';
-  return value || '';
-}
+async function assertPatientAccess(req: Request, res: Response, patientId: string): Promise<boolean> {
+  const patient = await prisma.patient.findUnique({ where: { id: patientId } });
 
-function assertPatientAccess(req: Request, res: Response, patientId: string): boolean {
-  const db = readDb();
-  const patient = db.patients.find((item) => item.id === patientId);
   if (!patient) {
     res.status(404).json({ message: 'Paciente não encontrado.' });
     return false;
   }
 
-  if (req.auth?.role === 'caregiver' && req.auth.caregiverId === patient.caregiverId) {
-    return true;
-  }
-
-  if (req.auth?.role === 'patient' && req.auth.patientId === patient.id) {
-    return true;
-  }
+  if (req.auth?.role === 'caregiver' && req.auth.caregiverId === patient.caregiverId) return true;
+  if (req.auth?.role === 'patient' && req.auth.patientId === patient.id) return true;
 
   res.status(403).json({ message: 'Você não tem acesso a este paciente.' });
   return false;
 }
 
-function toPublicCaregiver(caregiver: Caregiver) {
+function toPublicCaregiver(caregiver: any) {
   const { passwordHash, ...safe } = caregiver;
   return safe;
 }
 
-function toPublicPatient(patient: Patient) {
+function toPublicPatient(patient: any) {
   const { pinHash, ...safe } = patient;
+  return safe;
+}
+
+function toPublicDevice(device: any) {
+  if (!device) return null;
+  const { deviceTokenHash, ...safe } = device;
   return safe;
 }
 
@@ -332,6 +198,18 @@ function isHHMM(value: unknown) {
   return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
+function minutesOfDay(time: string) {
+  const [hour, minute] = time.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+function timeFromRelativeMinute(wakeTime: string, relativeMinute: number) {
+  const absolute = (minutesOfDay(wakeTime) + relativeMinute) % MINUTES_PER_DAY;
+  const hour = Math.floor(absolute / 60);
+  const minute = absolute % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
 function dateAtTime(baseDate: Date, time: string) {
   const [hour, minute] = time.split(':').map(Number);
   const date = new Date(baseDate);
@@ -339,442 +217,960 @@ function dateAtTime(baseDate: Date, time: string) {
   return date;
 }
 
-function minutesOfDay(time: string) {
-  const [hour, minute] = time.split(':').map(Number);
-  return hour * 60 + minute;
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60 * 1000);
 }
 
-function formatTime(date: Date) {
-  return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+function getCycleBaseDate() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
 }
 
-function generateMedicationSlots(med: Medication, baseDate = new Date()) {
-  const start = dateAtTime(baseDate, med.firstDoseTime);
-  const slots: Date[] = [];
-  const dosesPerDay = Math.max(1, Math.floor(24 / med.frequencyHours));
-
-  for (let i = 0; i < dosesPerDay; i += 1) {
-    const slot = new Date(start);
-    slot.setHours(slot.getHours() + i * med.frequencyHours);
-    slots.push(slot);
-  }
-
-  return slots;
+function mapSlotStatus(status: string) {
+  const labels: Record<string, string> = {
+    PENDING: 'Pendente',
+    COMMAND_SENT: 'Comando enviado',
+    RELEASED: 'Liberado',
+    TAKEN: 'Retirado',
+    MISSED: 'Não retirado',
+    FAILED: 'Falhou',
+  };
+  return labels[status] || status;
 }
 
-function buildPatientSchedule(patientId: string) {
-  const db = readDb();
-  const medications = db.medications.filter((med) => med.patientId === patientId);
-  const now = new Date();
-  const today = new Date(now);
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+async function getPreference(patientId: string) {
+  const existing = await prisma.patientPreference.findUnique({ where: { patientId } });
+  if (existing) return existing;
 
-  const allSlots = medications.flatMap((med) => {
-    const todaySlots = generateMedicationSlots(med, today);
-    const tomorrowSlots = generateMedicationSlots(med, tomorrow);
-    return [...todaySlots, ...tomorrowSlots].map((scheduledFor) => ({
-      medicationId: med.id,
+  return prisma.patientPreference.create({
+    data: {
       patientId,
-      name: med.name,
-      dosage: med.dosage,
-      compartment: med.compartment,
-      isCritical: med.isCritical,
-      scheduledFor: scheduledFor.toISOString(),
-      time: formatTime(scheduledFor),
-      timestamp: scheduledFor.getTime(),
-    }));
+      wakeTime: '06:00',
+      sleepTime: '22:00',
+      alarmVolume: 80,
+    },
   });
-
-  return allSlots.sort((a, b) => a.timestamp - b.timestamp);
 }
 
-function nextDose(patientId: string) {
-  const now = Date.now();
-  return buildPatientSchedule(patientId).find((slot) => slot.timestamp >= now) || null;
+async function getOrCreateDefaultDevice(patientId: string) {
+  const existing = await prisma.device.findFirst({ where: { patientId } });
+  if (existing) return existing;
+
+  const devicesCount = await prisma.device.count();
+  const deviceCode = devicesCount === 0 ? 'esp32-001' : `esp32-${String(devicesCount + 1).padStart(3, '0')}`;
+
+  return prisma.device.create({
+    data: {
+      patientId,
+      deviceCode,
+      deviceTokenHash: hashSecret(DEFAULT_DEVICE_TOKEN),
+      name: 'Dispenser principal',
+      status: 'OFFLINE',
+      currentCompartment: 1,
+      compartmentsCount: COMPARTMENTS_COUNT,
+    },
+  });
 }
 
-function buildRefillPlan(patientId: string) {
-  const db = readDb();
-  const meds = db.medications.filter((med) => med.patientId === patientId);
-  const grouped = new Map<string, Medication[]>();
+function buildPlanFromMedications(medications: PublicMedication[], wakeTime: string, cycleStart: Date): PlanPreview {
+  const grouped = new Map<number, PlanItem[]>();
+  const wakeMinute = minutesOfDay(wakeTime);
 
-  for (const med of meds) {
-    const slots = generateMedicationSlots(med, new Date());
-    for (const slot of slots) {
-      const key = formatTime(slot);
-      grouped.set(key, [...(grouped.get(key) || []), med]);
+  for (const med of medications) {
+    if (!med.active) continue;
+
+    const firstMinute = minutesOfDay(med.firstDoseTime);
+    const firstRelativeMinute = (firstMinute - wakeMinute + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+    const frequencyMinutes = med.frequencyHours * 60;
+
+    // O ciclo é 24h a partir do horário em que o paciente acorda.
+    // Exemplo: wakeTime 06:00 => ciclo 06:00 de hoje até 05:59 de amanhã.
+    for (let relativeMinute = firstRelativeMinute; relativeMinute < MINUTES_PER_DAY; relativeMinute += frequencyMinutes) {
+      const item: PlanItem = {
+        medicationId: med.id,
+        name: med.name,
+        dosage: med.dosage,
+        isCritical: med.isCritical,
+      };
+      grouped.set(relativeMinute, [...(grouped.get(relativeMinute) || []), item]);
     }
   }
 
-  return [...grouped.entries()]
-    .sort(([timeA], [timeB]) => minutesOfDay(timeA) - minutesOfDay(timeB))
-    .slice(0, 7)
-    .map(([time, slotMeds], index) => ({
-      id: index + 1,
-      time,
-      meds: slotMeds.map((med) => med.name).join(' + '),
-      desc: slotMeds.length > 1 ? 'Agrupamento' : 'Dose individual',
-      compartment: slotMeds[0]?.compartment || index + 1,
-      critical: slotMeds.some((med) => med.isCritical),
-    }));
+  const entries = [...grouped.entries()].sort(([a], [b]) => a - b);
+  const fits = entries.length <= COMPARTMENTS_COUNT;
+
+  const slots: PlanSlot[] = entries.map(([relativeMinute, items], index) => {
+    const scheduledAt = addMinutes(cycleStart, relativeMinute);
+    const scheduledTime = timeFromRelativeMinute(wakeTime, relativeMinute);
+    return {
+      id: `preview-${relativeMinute}`,
+      compartment: index + 1,
+      scheduledAt: scheduledAt.toISOString(),
+      scheduledTime,
+      status: 'PREVIEW',
+      items,
+      itemsText: items.map((item) => item.name).join(' + '),
+      critical: items.some((item) => item.isCritical),
+    };
+  });
+
+  return {
+    fits,
+    maxCompartments: COMPARTMENTS_COUNT,
+    requiredCompartments: entries.length,
+    overflowCount: Math.max(0, entries.length - COMPARTMENTS_COUNT),
+    cycleStart: cycleStart.toISOString(),
+    cycleEnd: addMinutes(cycleStart, MINUTES_PER_DAY).toISOString(),
+    wakeTime,
+    slots,
+    warning: fits ? null : `Este plano exige ${entries.length} compartimentos, mas o dispenser possui apenas ${COMPARTMENTS_COUNT}. Ajuste os horários iniciais/frequências ou divida o abastecimento em mais de um ciclo.`,
+  };
 }
 
-function getPreference(patientId: string) {
-  const db = readDb();
-  const existing = db.preferences.find((item) => item.patientId === patientId);
-  return existing || { patientId, sleepTime: '23:00', wakeTime: '06:00', alarmVolume: 80 };
+async function generatePlanPreview(patientId: string): Promise<PlanPreview> {
+  const preference = await getPreference(patientId);
+  const medications = await prisma.medication.findMany({
+    where: { patientId, active: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const cycleStart = dateAtTime(getCycleBaseDate(), preference.wakeTime);
+  return buildPlanFromMedications(medications as PublicMedication[], preference.wakeTime, cycleStart);
 }
 
-function buildHistory(patientId: string) {
-  const db = readDb();
-  const persisted = db.events.filter((event) => event.patientId === patientId);
+function mapCycleSlot(slot: any): PlanSlot {
+  const items: PlanItem[] = slot.items.map((item: any) => ({
+    medicationId: item.medicationId,
+    name: item.nameSnapshot,
+    dosage: item.dosageSnapshot,
+    isCritical: Boolean(item.medication?.isCritical),
+  }));
+
+  return {
+    id: slot.id,
+    compartment: slot.compartmentNumber,
+    scheduledAt: slot.scheduledAt.toISOString(),
+    scheduledTime: slot.scheduledTime,
+    status: slot.status,
+    items,
+    itemsText: items.map((item) => item.name).join(' + '),
+    critical: items.some((item) => item.isCritical),
+  };
+}
+
+async function getActiveCycle(patientId: string) {
+  return prisma.refillCycle.findFirst({
+    where: { patientId, status: 'ACTIVE' },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      device: true,
+      slots: {
+        orderBy: { compartmentNumber: 'asc' },
+        include: {
+          items: { include: { medication: true } },
+        },
+      },
+    },
+  });
+}
+
+async function getNextSlot(patientId: string) {
   const now = new Date();
-  const schedule = buildPatientSchedule(patientId)
-    .filter((slot) => slot.timestamp < now.getTime())
-    .slice(-8)
-    .map((slot, index) => ({
-      id: `auto-${slot.medicationId}-${slot.scheduledFor}`,
-      patientId,
-      medicationId: slot.medicationId,
-      name: slot.name,
-      dosage: slot.dosage,
-      compartment: slot.compartment,
-      scheduledFor: slot.scheduledFor,
-      dispensedAt: index % 5 === 0 ? null : slot.scheduledFor,
-      status: index % 5 === 0 ? 'missed' as DoseStatus : 'taken' as DoseStatus,
-      createdAt: slot.scheduledFor,
-    }));
+  const activeCycle = await getActiveCycle(patientId);
 
-  return [...persisted, ...schedule]
-    .sort((a, b) => new Date(b.scheduledFor).getTime() - new Date(a.scheduledFor).getTime())
-    .slice(0, 20);
+  if (activeCycle) {
+    return activeCycle.slots.find((slot: any) => (
+      ['PENDING', 'COMMAND_SENT', 'RELEASED'].includes(slot.status) && slot.scheduledAt.getTime() >= now.getTime() - 60 * 60 * 1000
+    )) || null;
+  }
+
+  const preview = await generatePlanPreview(patientId);
+  return preview.slots.find((slot) => new Date(slot.scheduledAt).getTime() >= now.getTime()) || preview.slots[0] || null;
 }
 
-function buildAlerts(patientId: string) {
-  const db = readDb();
-  const alerts = db.alerts.filter((alert) => alert.patientId === patientId && !alert.resolved);
-  const next = nextDose(patientId);
-  const meds = db.medications.filter((med) => med.patientId === patientId);
+async function buildDashboard(patientId: string) {
+  const [patient, medicationsCount, activeCycle, preview, alerts, device] = await Promise.all([
+    prisma.patient.findUnique({ where: { id: patientId } }),
+    prisma.medication.count({ where: { patientId, active: true } }),
+    getActiveCycle(patientId),
+    generatePlanPreview(patientId),
+    buildAlerts(patientId),
+    prisma.device.findFirst({ where: { patientId } }),
+  ]);
 
-  const generated: AlertItem[] = [];
-  if (!next && meds.length === 0) {
+  const nextSlot = await getNextSlot(patientId);
+
+  return {
+    patient: toPublicPatient(patient),
+    device: toPublicDevice(device),
+    activeCycle: activeCycle ? {
+      id: activeCycle.id,
+      status: activeCycle.status,
+      cycleStart: activeCycle.cycleStart,
+      cycleEnd: activeCycle.cycleEnd,
+      confirmedAt: activeCycle.confirmedAt,
+    } : null,
+    nextSlot: nextSlot ? (typeof (nextSlot as any).scheduledAt === 'string' ? nextSlot : mapCycleSlot(nextSlot)) : null,
+    refillPlan: activeCycle ? {
+      fits: true,
+      maxCompartments: COMPARTMENTS_COUNT,
+      requiredCompartments: activeCycle.slots.length,
+      overflowCount: 0,
+      cycleStart: activeCycle.cycleStart.toISOString(),
+      cycleEnd: activeCycle.cycleEnd.toISOString(),
+      wakeTime: activeCycle.wakeTime,
+      slots: activeCycle.slots.map(mapCycleSlot),
+      warning: null,
+    } : preview,
+    medicationsCount,
+    alertsCount: alerts.filter((alert) => alert.type !== 'INFO').length,
+  };
+}
+
+async function buildAlerts(patientId: string) {
+  const [persisted, medicationsCount, activeCycle, preview, device] = await Promise.all([
+    prisma.alert.findMany({ where: { patientId, resolved: false }, orderBy: { createdAt: 'desc' } }),
+    prisma.medication.count({ where: { patientId, active: true } }),
+    getActiveCycle(patientId),
+    generatePlanPreview(patientId),
+    prisma.device.findFirst({ where: { patientId } }),
+  ]);
+
+  const generated: any[] = [];
+  const now = new Date();
+
+  if (medicationsCount === 0) {
     generated.push({
-      id: 'setup-required',
+      id: 'generated-no-medications',
       patientId,
-      type: 'warning',
+      type: 'WARNING',
       title: 'Nenhum medicamento cadastrado',
-      desc: 'Cadastre ao menos um medicamento para iniciar a automação do dispenser.',
-      createdAt: new Date().toISOString(),
+      desc: 'Cadastre pelo menos um medicamento para que o sistema consiga montar o plano de abastecimento.',
+      createdAt: now,
       resolved: false,
     });
   }
 
-  const repeatedCompartments = meds.reduce<Record<number, number>>((acc, med) => {
-    acc[med.compartment] = (acc[med.compartment] || 0) + 1;
-    return acc;
-  }, {});
+  if (medicationsCount > 0 && !preview.fits) {
+    generated.push({
+      id: 'generated-plan-overflow',
+      patientId,
+      type: 'DANGER',
+      title: 'Plano não cabe no dispenser',
+      desc: preview.warning,
+      createdAt: now,
+      resolved: false,
+    });
+  }
 
-  Object.entries(repeatedCompartments).forEach(([compartment, count]) => {
-    if (count > 1) {
+  if (medicationsCount > 0 && preview.fits && !activeCycle) {
+    generated.push({
+      id: 'generated-cycle-not-confirmed',
+      patientId,
+      type: 'INFO',
+      title: 'Abastecimento pendente',
+      desc: 'O plano foi calculado, mas o cuidador ainda precisa confirmar que abasteceu fisicamente os 8 compartimentos.',
+      createdAt: now,
+      resolved: false,
+    });
+  }
+
+  if (device) {
+    const lastSeen = device.lastSeenAt?.getTime() || 0;
+    const offline = !lastSeen || now.getTime() - lastSeen > DEVICE_OFFLINE_AFTER_MINUTES * 60 * 1000;
+    if (offline) {
       generated.push({
-        id: `shared-compartment-${compartment}`,
+        id: 'generated-device-offline',
         patientId,
-        type: 'info',
-        title: 'Compartimento compartilhado',
-        desc: `O compartimento ${compartment} possui ${count} medicamentos agrupados no planejamento atual.`,
-        createdAt: new Date().toISOString(),
+        deviceId: device.id,
+        type: 'WARNING',
+        title: 'Dispenser offline',
+        desc: `O dispositivo ${device.deviceCode} ainda não enviou comunicação recente ao backend.`,
+        createdAt: now,
         resolved: false,
       });
     }
-  });
+  }
 
-  return [...generated, ...alerts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return [...generated, ...persisted];
+}
+
+async function authenticateDevice(req: Request, res: Response) {
+  const deviceCode = getRouteParam(req.params.deviceCode);
+  const deviceToken = String(req.headers['x-device-token'] || '');
+
+  const device = await prisma.device.findUnique({ where: { deviceCode } });
+  if (!device) {
+    res.status(404).json({ message: 'Dispositivo não encontrado.' });
+    return null;
+  }
+
+  if (!deviceToken || !verifySecret(deviceToken, device.deviceTokenHash)) {
+    res.status(401).json({ message: 'Token do dispositivo inválido.' });
+    return null;
+  }
+
+  return device;
 }
 
 app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'ok', message: 'Servidor rodando liso!', app: 'MedCare IoT' });
+  res.status(200).json({ status: 'ok', message: 'Servidor rodando com PostgreSQL e Prisma.', app: 'MedCare IoT' });
 });
 
-app.post('/api/auth/caregiver/register', (req: Request, res: Response) => {
-  const name = String(req.body.name || '').trim();
-  const email = normalizeEmail(req.body.email);
-  const phone = normalizePhone(req.body.phone);
-  const password = String(req.body.password || '');
+app.post('/api/auth/caregiver/register', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const email = normalizeEmail(req.body.email);
+    const phone = normalizePhone(req.body.phone);
+    const password = String(req.body.password || '');
 
-  if (!name || !email || !phone || password.length < 6) {
-    res.status(400).json({ message: 'Informe nome, email, telefone e senha com pelo menos 6 caracteres.' });
-    return;
-  }
-
-  const db = readDb();
-  if (db.caregivers.some((caregiver) => caregiver.email === email)) {
-    res.status(409).json({ message: 'Já existe um cuidador cadastrado com este email.' });
-    return;
-  }
-
-  if (db.caregivers.some((caregiver) => caregiver.phone === phone)) {
-    res.status(409).json({ message: 'Já existe um cuidador cadastrado com este telefone.' });
-    return;
-  }
-
-  const caregiver: Caregiver = {
-    id: crypto.randomUUID(),
-    name,
-    email,
-    phone,
-    passwordHash: hashSecret(password),
-    createdAt: new Date().toISOString(),
-  };
-
-  db.caregivers.push(caregiver);
-  writeDb(db);
-
-  res.status(201).json({
-    token: signToken({ role: 'caregiver', caregiverId: caregiver.id }),
-    user: toPublicCaregiver(caregiver),
-    role: 'caregiver',
-  });
-});
-
-app.post('/api/auth/caregiver/login', (req: Request, res: Response) => {
-  const email = normalizeEmail(req.body.email);
-  const password = String(req.body.password || '');
-  const db = readDb();
-  const caregiver = db.caregivers.find((item) => item.email === email);
-
-  if (!caregiver || !verifySecret(password, caregiver.passwordHash)) {
-    res.status(401).json({ message: 'Email ou senha inválidos.' });
-    return;
-  }
-
-  res.json({
-    token: signToken({ role: 'caregiver', caregiverId: caregiver.id }),
-    user: toPublicCaregiver(caregiver),
-    role: 'caregiver',
-  });
-});
-
-app.post('/api/auth/patient/login', (req: Request, res: Response) => {
-  const caregiverPhone = normalizePhone(req.body.caregiverPhone);
-  const pin = String(req.body.pin || '');
-  const db = readDb();
-  const caregiver = db.caregivers.find((item) => item.phone === caregiverPhone);
-
-  if (!caregiver) {
-    res.status(401).json({ message: 'Telefone do cuidador ou PIN inválido.' });
-    return;
-  }
-
-  const patient = db.patients.find((item) => item.caregiverId === caregiver.id && verifySecret(pin, item.pinHash));
-  if (!patient) {
-    res.status(401).json({ message: 'Telefone do cuidador ou PIN inválido.' });
-    return;
-  }
-
-  res.json({
-    token: signToken({ role: 'patient', patientId: patient.id, caregiverId: caregiver.id }),
-    user: toPublicPatient(patient),
-    caregiver: toPublicCaregiver(caregiver),
-    role: 'patient',
-  });
-});
-
-app.get('/api/me', requireAuth, (req: Request, res: Response) => {
-  const db = readDb();
-  if (req.auth?.role === 'caregiver') {
-    const caregiver = db.caregivers.find((item) => item.id === req.auth?.caregiverId);
-    if (!caregiver) {
-      res.status(404).json({ message: 'Cuidador não encontrado.' });
+    if (!name || !email || !phone || password.length < 6) {
+      res.status(400).json({ message: 'Informe nome, email, telefone e senha com pelo menos 6 caracteres.' });
       return;
     }
-    res.json({ role: 'caregiver', user: toPublicCaregiver(caregiver) });
-    return;
+
+    const duplicated = await prisma.caregiver.findFirst({ where: { OR: [{ email }, { phone }] } });
+    if (duplicated?.email === email) {
+      res.status(409).json({ message: 'Já existe um cuidador cadastrado com este email.' });
+      return;
+    }
+    if (duplicated?.phone === phone) {
+      res.status(409).json({ message: 'Já existe um cuidador cadastrado com este telefone.' });
+      return;
+    }
+
+    const caregiver = await prisma.caregiver.create({
+      data: { name, email, phone, passwordHash: hashSecret(password) },
+    });
+
+    res.status(201).json({
+      token: signToken({ role: 'caregiver', caregiverId: caregiver.id }),
+      user: toPublicCaregiver(caregiver),
+      role: 'caregiver',
+    });
+  } catch (err) {
+    next(err);
   }
+});
 
-  const patient = db.patients.find((item) => item.id === req.auth?.patientId);
-  if (!patient) {
-    res.status(404).json({ message: 'Paciente não encontrado.' });
-    return;
+app.post('/api/auth/caregiver/login', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const password = String(req.body.password || '');
+    const caregiver = await prisma.caregiver.findUnique({ where: { email } });
+
+    if (!caregiver || !verifySecret(password, caregiver.passwordHash)) {
+      res.status(401).json({ message: 'Email ou senha inválidos.' });
+      return;
+    }
+
+    res.json({
+      token: signToken({ role: 'caregiver', caregiverId: caregiver.id }),
+      user: toPublicCaregiver(caregiver),
+      role: 'caregiver',
+    });
+  } catch (err) {
+    next(err);
   }
-  res.json({ role: 'patient', user: toPublicPatient(patient) });
 });
 
-app.get('/api/patients', requireAuth, requireCaregiver, (req: Request, res: Response) => {
-  const db = readDb();
-  const patients = db.patients
-    .filter((patient) => patient.caregiverId === req.auth?.caregiverId)
-    .map(toPublicPatient);
-  res.json(patients);
-});
+app.post('/api/auth/patient/login', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const caregiverPhone = normalizePhone(req.body.caregiverPhone);
+    const pin = String(req.body.pin || '').replace(/\D/g, '');
 
-app.post('/api/patients', requireAuth, requireCaregiver, (req: Request, res: Response) => {
-  const name = String(req.body.name || '').trim();
-  const relationship = String(req.body.relationship || '').trim();
-  const pin = String(req.body.pin || '').replace(/\D/g, '');
+    const caregiver = await prisma.caregiver.findUnique({ where: { phone: caregiverPhone } });
+    if (!caregiver) {
+      res.status(401).json({ message: 'Telefone do cuidador ou PIN inválido.' });
+      return;
+    }
 
-  if (!name || !relationship || pin.length !== 4) {
-    res.status(400).json({ message: 'Informe nome, parentesco e PIN numérico com 4 dígitos.' });
-    return;
+    const patients = await prisma.patient.findMany({ where: { caregiverId: caregiver.id } });
+    const patient = patients.find((item) => verifySecret(pin, item.pinHash));
+
+    if (!patient) {
+      res.status(401).json({ message: 'Telefone do cuidador ou PIN inválido.' });
+      return;
+    }
+
+    res.json({
+      token: signToken({ role: 'patient', patientId: patient.id, caregiverId: caregiver.id }),
+      user: toPublicPatient(patient),
+      caregiver: toPublicCaregiver(caregiver),
+      role: 'patient',
+    });
+  } catch (err) {
+    next(err);
   }
-
-  const db = readDb();
-  const patient: Patient = {
-    id: crypto.randomUUID(),
-    caregiverId: req.auth!.caregiverId!,
-    name,
-    relationship,
-    pinHash: hashSecret(pin),
-    createdAt: new Date().toISOString(),
-  };
-
-  db.patients.push(patient);
-  db.preferences.push({ patientId: patient.id, sleepTime: '23:00', wakeTime: '06:00', alarmVolume: 80 });
-  writeDb(db);
-
-  res.status(201).json(toPublicPatient(patient));
 });
 
-app.get('/api/patients/:patientId/dashboard', requireAuth, (req: Request, res: Response) => {
-  const patientId = getRouteParam(req.params.patientId);
-  if (!assertPatientAccess(req, res, patientId)) return;
+app.get('/api/me', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (req.auth?.role === 'caregiver') {
+      const caregiver = await prisma.caregiver.findUnique({ where: { id: req.auth.caregiverId } });
+      if (!caregiver) {
+        res.status(404).json({ message: 'Cuidador não encontrado.' });
+        return;
+      }
+      res.json({ role: 'caregiver', user: toPublicCaregiver(caregiver) });
+      return;
+    }
 
-  const db = readDb();
-  const patient = db.patients.find((item) => item.id === patientId)!;
-  const meds = db.medications.filter((med) => med.patientId === patientId);
-  res.json({
-    patient: toPublicPatient(patient),
-    nextMedication: nextDose(patientId),
-    refillPlan: buildRefillPlan(patientId),
-    medicationsCount: meds.length,
-    alertsCount: buildAlerts(patientId).filter((alert) => alert.type !== 'info').length,
-  });
-});
-
-app.get('/api/patients/:patientId/medications', requireAuth, (req: Request, res: Response) => {
-  const patientId = getRouteParam(req.params.patientId);
-  if (!assertPatientAccess(req, res, patientId)) return;
-
-  const db = readDb();
-  res.json(db.medications.filter((med) => med.patientId === patientId));
-});
-
-app.post('/api/patients/:patientId/medications', requireAuth, requireCaregiver, (req: Request, res: Response) => {
-  const patientId = getRouteParam(req.params.patientId);
-  if (!assertPatientAccess(req, res, patientId)) return;
-
-  const name = String(req.body.name || '').trim();
-  const dosage = String(req.body.dosage || '').trim();
-  const firstDoseTime = String(req.body.firstDoseTime || req.body.time || '').trim();
-  const compartment = Number(req.body.compartment);
-  const frequencyHours = parseFrequencyHours(req.body.frequencyHours);
-  const isCritical = Boolean(req.body.isCritical);
-
-  if (!name || !dosage || !isHHMM(firstDoseTime) || !Number.isInteger(compartment) || compartment < 1 || compartment > 7) {
-    res.status(400).json({ message: 'Informe medicamento, dosagem, horário válido e compartimento entre 1 e 7.' });
-    return;
+    const patient = await prisma.patient.findUnique({ where: { id: req.auth?.patientId } });
+    if (!patient) {
+      res.status(404).json({ message: 'Paciente não encontrado.' });
+      return;
+    }
+    res.json({ role: 'patient', user: toPublicPatient(patient) });
+  } catch (err) {
+    next(err);
   }
-
-  const db = readDb();
-  const medication: Medication = {
-    id: crypto.randomUUID(),
-    patientId,
-    name,
-    dosage,
-    firstDoseTime,
-    frequencyHours,
-    compartment,
-    isCritical,
-    createdAt: new Date().toISOString(),
-  };
-
-  db.medications.push(medication);
-  writeDb(db);
-  res.status(201).json(medication);
 });
 
-app.get('/api/patients/:patientId/history', requireAuth, (req: Request, res: Response) => {
-  const patientId = getRouteParam(req.params.patientId);
-  if (!assertPatientAccess(req, res, patientId)) return;
-  res.json(buildHistory(patientId));
-});
-
-app.get('/api/patients/:patientId/alerts', requireAuth, (req: Request, res: Response) => {
-  const patientId = getRouteParam(req.params.patientId);
-  if (!assertPatientAccess(req, res, patientId)) return;
-  res.json(buildAlerts(patientId));
-});
-
-app.get('/api/patients/:patientId/preferences', requireAuth, (req: Request, res: Response) => {
-  const patientId = getRouteParam(req.params.patientId);
-  if (!assertPatientAccess(req, res, patientId)) return;
-  res.json(getPreference(patientId));
-});
-
-app.put('/api/patients/:patientId/preferences', requireAuth, (req: Request, res: Response) => {
-  const patientId = getRouteParam(req.params.patientId);
-  if (!assertPatientAccess(req, res, patientId)) return;
-
-  const sleepTime = String(req.body.sleepTime || '23:00');
-  const wakeTime = String(req.body.wakeTime || '06:00');
-  const alarmVolume = Number(req.body.alarmVolume ?? 80);
-
-  if (!isHHMM(sleepTime) || !isHHMM(wakeTime) || Number.isNaN(alarmVolume) || alarmVolume < 0 || alarmVolume > 100) {
-    res.status(400).json({ message: 'Preferências inválidas.' });
-    return;
+app.get('/api/patients', requireAuth, requireCaregiver, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patients = await prisma.patient.findMany({
+      where: { caregiverId: req.auth!.caregiverId! },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(patients.map(toPublicPatient));
+  } catch (err) {
+    next(err);
   }
-
-  const db = readDb();
-  const existingIndex = db.preferences.findIndex((item) => item.patientId === patientId);
-  const preference: PatientPreference = { patientId, sleepTime, wakeTime, alarmVolume };
-
-  if (existingIndex >= 0) db.preferences[existingIndex] = preference;
-  else db.preferences.push(preference);
-
-  writeDb(db);
-  res.json(preference);
 });
 
-app.post('/api/dispense', (req: Request, res: Response) => {
-  const db = readDb();
-  const patientId = String(req.body.patientId || '');
-  const compartment = Number(req.body.compartment || req.body.compartimento || 1);
-  const patient = db.patients.find((item) => item.id === patientId) || db.patients[0];
+app.post('/api/patients', requireAuth, requireCaregiver, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const relationship = String(req.body.relationship || '').trim();
+    const pin = String(req.body.pin || '').replace(/\D/g, '');
 
-  if (!patient) {
-    res.status(404).json({ message: 'Nenhum paciente cadastrado para dispensação.' });
-    return;
+    if (!name || !relationship || pin.length !== 4) {
+      res.status(400).json({ message: 'Informe nome, parentesco e PIN numérico com 4 dígitos.' });
+      return;
+    }
+
+    const existingPatients = await prisma.patient.findMany({ where: { caregiverId: req.auth!.caregiverId! } });
+    const duplicatedPin = existingPatients.some((patient) => verifySecret(pin, patient.pinHash));
+    if (duplicatedPin) {
+      res.status(409).json({ message: 'Este cuidador já possui um paciente com este PIN. Escolha outro PIN.' });
+      return;
+    }
+
+    const patient = await prisma.patient.create({
+      data: {
+        caregiverId: req.auth!.caregiverId!,
+        name,
+        relationship,
+        pinHash: hashSecret(pin),
+        preference: {
+          create: { wakeTime: '06:00', sleepTime: '22:00', alarmVolume: 80 },
+        },
+      },
+    });
+
+    await getOrCreateDefaultDevice(patient.id);
+    res.status(201).json(toPublicPatient(patient));
+  } catch (err) {
+    next(err);
   }
+});
 
-  const medication = db.medications.find((med) => med.patientId === patient.id && med.compartment === compartment)
-    || db.medications.find((med) => med.patientId === patient.id)
-    || null;
+app.get('/api/patients/:patientId/dashboard', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+    res.json(await buildDashboard(patientId));
+  } catch (err) {
+    next(err);
+  }
+});
 
-  const event: DispenseEvent = {
-    id: crypto.randomUUID(),
-    patientId: patient.id,
-    medicationId: medication?.id || null,
-    name: medication?.name || 'Dispensação manual',
-    dosage: medication?.dosage || 'Dose manual',
-    compartment,
-    scheduledFor: new Date().toISOString(),
-    dispensedAt: new Date().toISOString(),
-    status: 'taken',
-    createdAt: new Date().toISOString(),
-  };
+app.get('/api/patients/:patientId/medications', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
 
-  db.events.push(event);
-  writeDb(db);
+    const meds = await prisma.medication.findMany({ where: { patientId, active: true }, orderBy: { createdAt: 'asc' } });
+    res.json(meds);
+  } catch (err) {
+    next(err);
+  }
+});
 
-  console.log('Comando de dispensação recebido do App/ESP32!', { patientId: patient.id, compartment });
+app.post('/api/patients/:patientId/medications', requireAuth, requireCaregiver, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
 
-  res.status(200).json({
-    success: true,
-    command: 'GIRAR_MOTOR',
-    angulo: 45,
-    compartment,
-    event,
-  });
+    const name = String(req.body.name || '').trim();
+    const dosage = String(req.body.dosage || '').trim();
+    const instructions = String(req.body.instructions || '').trim() || null;
+    const firstDoseTime = String(req.body.firstDoseTime || '').trim();
+    const frequencyHours = parseFrequencyHours(req.body.frequencyHours);
+    const isCritical = Boolean(req.body.isCritical);
+
+    if (!name || !dosage || !isHHMM(firstDoseTime)) {
+      res.status(400).json({ message: 'Informe medicamento, dosagem e horário inicial válido.' });
+      return;
+    }
+
+    const medication = await prisma.medication.create({
+      data: {
+        patientId,
+        name,
+        dosage,
+        instructions,
+        firstDoseTime,
+        frequencyHours,
+        isCritical,
+        active: true,
+      },
+    });
+
+    // Quando uma regra de remédio muda, o ciclo ativo antigo deixa de ser confiável.
+    // O cuidador deve gerar/confirmar um novo abastecimento físico.
+    await prisma.refillCycle.updateMany({
+      where: { patientId, status: 'ACTIVE' },
+      data: { status: 'CANCELLED' },
+    });
+
+    res.status(201).json(medication);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/patients/:patientId/medications/:medicationId', requireAuth, requireCaregiver, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    const medicationId = getRouteParam(req.params.medicationId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+
+    await prisma.medication.update({
+      where: { id: medicationId },
+      data: { active: false },
+    });
+
+    await prisma.refillCycle.updateMany({ where: { patientId, status: 'ACTIVE' }, data: { status: 'CANCELLED' } });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/patients/:patientId/refill-plan', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+    res.json(await generatePlanPreview(patientId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/patients/:patientId/refill-cycles/confirm', requireAuth, requireCaregiver, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+
+    const preview = await generatePlanPreview(patientId);
+    if (!preview.fits) {
+      res.status(400).json({ message: preview.warning || 'O plano não cabe no dispenser.' });
+      return;
+    }
+    if (preview.slots.length === 0) {
+      res.status(400).json({ message: 'Não há medicamentos ativos para montar o abastecimento.' });
+      return;
+    }
+
+    const device = await getOrCreateDefaultDevice(patientId);
+
+    const cycle = await prisma.$transaction(async (tx) => {
+      await tx.refillCycle.updateMany({
+        where: { patientId, status: 'ACTIVE' },
+        data: { status: 'CANCELLED' },
+      });
+
+      return tx.refillCycle.create({
+        data: {
+          patientId,
+          deviceId: device.id,
+          cycleStart: new Date(preview.cycleStart),
+          cycleEnd: new Date(preview.cycleEnd),
+          wakeTime: preview.wakeTime,
+          status: 'ACTIVE',
+          confirmedAt: new Date(),
+          slots: {
+            create: preview.slots.map((slot) => ({
+              patientId,
+              deviceId: device.id,
+              compartmentNumber: slot.compartment,
+              scheduledAt: new Date(slot.scheduledAt),
+              scheduledTime: slot.scheduledTime,
+              status: 'PENDING',
+              items: {
+                create: slot.items.map((item) => ({
+                  medicationId: item.medicationId,
+                  nameSnapshot: item.name,
+                  dosageSnapshot: item.dosage,
+                  quantityText: item.dosage,
+                })),
+              },
+            })),
+          },
+        },
+        include: {
+          device: true,
+          slots: {
+            orderBy: { compartmentNumber: 'asc' },
+            include: { items: { include: { medication: true } } },
+          },
+        },
+      });
+    });
+
+    res.status(201).json({
+      id: cycle.id,
+      status: cycle.status,
+      device: toPublicDevice(cycle.device),
+      slots: cycle.slots.map(mapCycleSlot),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/patients/:patientId/dispense', requireAuth, requireCaregiver, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+
+    const activeCycle = await getActiveCycle(patientId);
+    if (!activeCycle) {
+      res.status(400).json({ message: 'Confirme o abastecimento antes de enviar comandos ao dispenser.' });
+      return;
+    }
+
+    const requestedSlotId = String(req.body.refillSlotId || '');
+    const slot = requestedSlotId
+      ? activeCycle.slots.find((item: any) => item.id === requestedSlotId)
+      : activeCycle.slots.find((item: any) => ['PENDING', 'COMMAND_SENT', 'RELEASED'].includes(item.status));
+
+    if (!slot) {
+      res.status(404).json({ message: 'Nenhum compartimento pendente encontrado no ciclo ativo.' });
+      return;
+    }
+
+    const command = await prisma.deviceCommand.create({
+      data: {
+        deviceId: activeCycle.deviceId,
+        patientId,
+        refillSlotId: slot.id,
+        commandType: 'MANUAL_DISPENSE',
+        status: 'PENDING',
+        payload: {
+          compartment: slot.compartmentNumber,
+          refillSlotId: slot.id,
+          scheduledAt: slot.scheduledAt.toISOString(),
+          anglePerStep: 45,
+        },
+      },
+    });
+
+    await prisma.refillSlot.update({ where: { id: slot.id }, data: { status: 'COMMAND_SENT' } });
+
+    res.status(201).json({
+      success: true,
+      message: 'Comando criado. O ESP32 executará ao buscar comandos pendentes.',
+      command,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/patients/:patientId/history', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+
+    const slots = await prisma.refillSlot.findMany({
+      where: { patientId },
+      orderBy: { scheduledAt: 'desc' },
+      take: 30,
+      include: { items: { include: { medication: true } }, cycle: true },
+    });
+
+    res.json(slots.map((slot) => ({
+      id: slot.id,
+      patientId: slot.patientId,
+      refillCycleId: slot.refillCycleId,
+      compartment: slot.compartmentNumber,
+      scheduledAt: slot.scheduledAt,
+      scheduledTime: slot.scheduledTime,
+      releasedAt: slot.releasedAt,
+      confirmedAt: slot.confirmedAt,
+      status: slot.status,
+      statusLabel: mapSlotStatus(slot.status),
+      items: slot.items.map((item) => ({
+        id: item.id,
+        medicationId: item.medicationId,
+        name: item.nameSnapshot,
+        dosage: item.dosageSnapshot,
+      })),
+      itemsText: slot.items.map((item) => item.nameSnapshot).join(' + '),
+      createdAt: slot.createdAt,
+    })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/patients/:patientId/alerts', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+    res.json(await buildAlerts(patientId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/patients/:patientId/preferences', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+    res.json(await getPreference(patientId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/patients/:patientId/preferences', requireAuth, requireCaregiver, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const patientId = getRouteParam(req.params.patientId);
+    if (!(await assertPatientAccess(req, res, patientId))) return;
+
+    const wakeTime = String(req.body.wakeTime || '06:00');
+    const sleepTime = String(req.body.sleepTime || '22:00');
+    const alarmVolume = Number(req.body.alarmVolume ?? 80);
+
+    if (!isHHMM(wakeTime) || !isHHMM(sleepTime) || Number.isNaN(alarmVolume) || alarmVolume < 0 || alarmVolume > 100) {
+      res.status(400).json({ message: 'Preferências inválidas.' });
+      return;
+    }
+
+    const preference = await prisma.patientPreference.upsert({
+      where: { patientId },
+      create: { patientId, wakeTime, sleepTime, alarmVolume },
+      update: { wakeTime, sleepTime, alarmVolume },
+    });
+
+    await prisma.refillCycle.updateMany({ where: { patientId, status: 'ACTIVE' }, data: { status: 'CANCELLED' } });
+    res.json(preference);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/device/:deviceCode/heartbeat', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const device = await authenticateDevice(req, res);
+    if (!device) return;
+
+    const updated = await prisma.device.update({
+      where: { id: device.id },
+      data: {
+        status: 'ONLINE',
+        lastSeenAt: new Date(),
+        currentCompartment: Number(req.body.currentCompartment || device.currentCompartment || 1),
+      },
+    });
+
+    await prisma.deviceEvent.create({
+      data: {
+        deviceId: device.id,
+        eventType: 'HEARTBEAT',
+        payload: req.body || {},
+      },
+    });
+
+    res.json({ ok: true, device: toPublicDevice(updated) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/device/:deviceCode/active-cycle', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const device = await authenticateDevice(req, res);
+    if (!device) return;
+
+    const activeCycle = await prisma.refillCycle.findFirst({
+      where: { deviceId: device.id, status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        slots: {
+          orderBy: { compartmentNumber: 'asc' },
+          include: { items: { include: { medication: true } } },
+        },
+      },
+    });
+
+    await prisma.deviceEvent.create({
+      data: { deviceId: device.id, eventType: 'CYCLE_SYNC', payload: { hasCycle: Boolean(activeCycle) } },
+    });
+
+    if (!activeCycle) {
+      res.json({ active: false, slots: [] });
+      return;
+    }
+
+    res.json({
+      active: true,
+      cycleId: activeCycle.id,
+      cycleStart: activeCycle.cycleStart,
+      cycleEnd: activeCycle.cycleEnd,
+      wakeTime: activeCycle.wakeTime,
+      slots: activeCycle.slots.map(mapCycleSlot),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/device/:deviceCode/commands/next', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const device = await authenticateDevice(req, res);
+    if (!device) return;
+
+    const command = await prisma.deviceCommand.findFirst({
+      where: { deviceId: device.id, status: 'PENDING' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (!command) {
+      res.json({ hasCommand: false });
+      return;
+    }
+
+    const updated = await prisma.deviceCommand.update({
+      where: { id: command.id },
+      data: { status: 'SENT', sentAt: new Date() },
+    });
+
+    res.json({ hasCommand: true, command: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/device/:deviceCode/commands/:commandId/ack', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const device = await authenticateDevice(req, res);
+    if (!device) return;
+
+    const commandId = getRouteParam(req.params.commandId);
+    const ok = Boolean(req.body.ok ?? true);
+
+    const command = await prisma.deviceCommand.findFirst({ where: { id: commandId, deviceId: device.id } });
+    if (!command) {
+      res.status(404).json({ message: 'Comando não encontrado.' });
+      return;
+    }
+
+    const updated = await prisma.deviceCommand.update({
+      where: { id: command.id },
+      data: {
+        status: ok ? 'ACKNOWLEDGED' : 'FAILED',
+        ackAt: new Date(),
+        errorMessage: ok ? null : String(req.body.errorMessage || 'Falha informada pelo dispositivo.'),
+      },
+    });
+
+    if (command.refillSlotId) {
+      await prisma.refillSlot.update({
+        where: { id: command.refillSlotId },
+        data: { status: ok ? 'RELEASED' : 'FAILED', releasedAt: ok ? new Date() : undefined },
+      });
+    }
+
+    await prisma.deviceEvent.create({
+      data: {
+        deviceId: device.id,
+        refillSlotId: command.refillSlotId,
+        eventType: 'COMMAND_ACK',
+        payload: { ok, commandId, body: req.body || {} },
+      },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/device/:deviceCode/events', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const device = await authenticateDevice(req, res);
+    if (!device) return;
+
+    const eventType = String(req.body.eventType || '').toUpperCase();
+    const refillSlotId = String(req.body.refillSlotId || '') || null;
+    const validEvents = ['BOOT', 'HEARTBEAT', 'CYCLE_SYNC', 'SLOT_RELEASED', 'SENSOR_DETECTED', 'DOSE_TAKEN', 'DOSE_MISSED', 'MOTOR_ERROR'];
+
+    if (!validEvents.includes(eventType)) {
+      res.status(400).json({ message: 'Tipo de evento inválido.' });
+      return;
+    }
+
+    const event = await prisma.deviceEvent.create({
+      data: {
+        deviceId: device.id,
+        refillSlotId,
+        eventType: eventType as any,
+        payload: req.body.payload || req.body || {},
+      },
+    });
+
+    if (refillSlotId) {
+      if (eventType === 'SLOT_RELEASED') {
+        await prisma.refillSlot.update({ where: { id: refillSlotId }, data: { status: 'RELEASED', releasedAt: new Date() } });
+      }
+
+      if (eventType === 'SENSOR_DETECTED' || eventType === 'DOSE_TAKEN') {
+        await prisma.refillSlot.update({ where: { id: refillSlotId }, data: { status: 'TAKEN', confirmedAt: new Date() } });
+      }
+
+      if (eventType === 'DOSE_MISSED' || eventType === 'MOTOR_ERROR') {
+        const slot = await prisma.refillSlot.update({
+          where: { id: refillSlotId },
+          data: { status: eventType === 'MOTOR_ERROR' ? 'FAILED' : 'MISSED' },
+          include: { items: true },
+        });
+
+        await prisma.alert.create({
+          data: {
+            patientId: slot.patientId,
+            deviceId: device.id,
+            refillSlotId: slot.id,
+            type: eventType === 'MOTOR_ERROR' ? 'DANGER' : 'WARNING',
+            title: eventType === 'MOTOR_ERROR' ? 'Falha no motor' : 'Dose não retirada',
+            desc: eventType === 'MOTOR_ERROR'
+              ? `O ESP32 informou falha ao liberar o compartimento ${slot.compartmentNumber}.`
+              : `O compartimento ${slot.compartmentNumber}, programado para ${slot.scheduledTime}, não teve retirada confirmada.`,
+          },
+        });
+      }
+    }
+
+    await prisma.device.update({ where: { id: device.id }, data: { status: 'ONLINE', lastSeenAt: new Date() } });
+    res.status(201).json({ ok: true, event });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
@@ -782,7 +1178,11 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ message: 'Erro interno no servidor.' });
 });
 
-ensureDbFile();
+process.on('SIGINT', async () => {
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Backend MedCare IoT iniciado na porta ${PORT}`);
 });

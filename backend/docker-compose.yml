@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: medcare_iot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "123"
+      POSTGRES_DB: medcare_iot
+    ports:
+      - "5432:5432"
+    volumes:
+      - medcare_iot_pgdata:/var/lib/postgresql/data
+
+volumes:
+  medcare_iot_pgdata:

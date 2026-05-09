@@ -1,0 +1,273 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum CycleStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum SlotStatus {
+  PENDING
+  COMMAND_SENT
+  RELEASED
+  TAKEN
+  MISSED
+  FAILED
+}
+
+enum AlertType {
+  INFO
+  WARNING
+  DANGER
+}
+
+enum CommandType {
+  DISPENSE_SLOT
+  MANUAL_DISPENSE
+}
+
+enum CommandStatus {
+  PENDING
+  SENT
+  ACKNOWLEDGED
+  FAILED
+  EXPIRED
+}
+
+enum DeviceEventType {
+  BOOT
+  HEARTBEAT
+  CYCLE_SYNC
+  SLOT_RELEASED
+  SENSOR_DETECTED
+  DOSE_TAKEN
+  DOSE_MISSED
+  MOTOR_ERROR
+  COMMAND_ACK
+}
+
+model Caregiver {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String
+  email        String    @unique
+  phone        String    @unique
+  passwordHash String    @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  patients Patient[]
+
+  @@map("caregivers")
+}
+
+model Patient {
+  id           String    @id @default(uuid()) @db.Uuid
+  caregiverId  String    @map("caregiver_id") @db.Uuid
+  name         String
+  relationship String
+  pinHash      String    @map("pin_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  caregiver     Caregiver          @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  preference    PatientPreference?
+  medications   Medication[]
+  devices       Device[]
+  refillCycles  RefillCycle[]
+  refillSlots   RefillSlot[]
+  alerts        Alert[]
+  commands      DeviceCommand[]
+
+  @@index([caregiverId])
+  @@map("patients")
+}
+
+model PatientPreference {
+  patientId   String   @id @map("patient_id") @db.Uuid
+  wakeTime    String   @default("06:00") @map("wake_time")
+  sleepTime   String   @default("22:00") @map("sleep_time")
+  alarmVolume Int      @default(80) @map("alarm_volume")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("patient_preferences")
+}
+
+model Medication {
+  id             String   @id @default(uuid()) @db.Uuid
+  patientId      String   @map("patient_id") @db.Uuid
+  name           String
+  dosage         String
+  instructions   String? 
+  firstDoseTime  String   @map("first_dose_time")
+  frequencyHours Int      @map("frequency_hours")
+  isCritical     Boolean  @default(true) @map("is_critical")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  items   RefillSlotItem[]
+
+  @@index([patientId])
+  @@map("medications")
+}
+
+model Device {
+  id                String       @id @default(uuid()) @db.Uuid
+  patientId         String       @map("patient_id") @db.Uuid
+  deviceCode        String       @unique @map("device_code")
+  deviceTokenHash   String       @map("device_token_hash")
+  name              String       @default("Dispenser principal")
+  status            DeviceStatus @default(OFFLINE)
+  currentCompartment Int         @default(1) @map("current_compartment")
+  compartmentsCount  Int         @default(8) @map("compartments_count")
+  lastSeenAt        DateTime?    @map("last_seen_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  patient      Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  cycles       RefillCycle[]
+  slots        RefillSlot[]
+  commands     DeviceCommand[]
+  events       DeviceEvent[]
+  alerts       Alert[]
+
+  @@index([patientId])
+  @@map("devices")
+}
+
+model RefillCycle {
+  id          String      @id @default(uuid()) @db.Uuid
+  patientId   String      @map("patient_id") @db.Uuid
+  deviceId    String      @map("device_id") @db.Uuid
+  cycleStart  DateTime    @map("cycle_start")
+  cycleEnd    DateTime    @map("cycle_end")
+  wakeTime    String      @map("wake_time")
+  status      CycleStatus @default(DRAFT)
+  confirmedAt DateTime?   @map("confirmed_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  patient Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  device  Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  slots   RefillSlot[]
+
+  @@index([patientId, status])
+  @@index([deviceId, status])
+  @@map("refill_cycles")
+}
+
+model RefillSlot {
+  id                String     @id @default(uuid()) @db.Uuid
+  refillCycleId     String     @map("refill_cycle_id") @db.Uuid
+  patientId         String     @map("patient_id") @db.Uuid
+  deviceId          String     @map("device_id") @db.Uuid
+  compartmentNumber Int        @map("compartment_number")
+  scheduledAt       DateTime   @map("scheduled_at")
+  scheduledTime     String     @map("scheduled_time")
+  status            SlotStatus @default(PENDING)
+  releasedAt        DateTime?  @map("released_at")
+  confirmedAt       DateTime?  @map("confirmed_at")
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+
+  cycle    RefillCycle      @relation(fields: [refillCycleId], references: [id], onDelete: Cascade)
+  patient  Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  device   Device           @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  items    RefillSlotItem[]
+  commands DeviceCommand[]
+  events   DeviceEvent[]
+  alerts   Alert[]
+
+  @@index([patientId, scheduledAt])
+  @@index([deviceId, scheduledAt])
+  @@map("refill_slots")
+}
+
+model RefillSlotItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  refillSlotId String   @map("refill_slot_id") @db.Uuid
+  medicationId String   @map("medication_id") @db.Uuid
+  nameSnapshot String   @map("name_snapshot")
+  dosageSnapshot String @map("dosage_snapshot")
+  quantityText  String  @default("1 dose") @map("quantity_text")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  slot       RefillSlot @relation(fields: [refillSlotId], references: [id], onDelete: Cascade)
+  medication Medication @relation(fields: [medicationId], references: [id], onDelete: Restrict)
+
+  @@index([refillSlotId])
+  @@map("refill_slot_items")
+}
+
+model DeviceCommand {
+  id           String        @id @default(uuid()) @db.Uuid
+  deviceId     String        @map("device_id") @db.Uuid
+  patientId    String        @map("patient_id") @db.Uuid
+  refillSlotId String?       @map("refill_slot_id") @db.Uuid
+  commandType  CommandType   @map("command_type")
+  payload      Json
+  status       CommandStatus @default(PENDING)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  sentAt       DateTime?     @map("sent_at")
+  ackAt        DateTime?     @map("ack_at")
+  errorMessage String?       @map("error_message")
+
+  device Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  patient Patient    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  slot   RefillSlot? @relation(fields: [refillSlotId], references: [id], onDelete: SetNull)
+
+  @@index([deviceId, status])
+  @@map("device_commands")
+}
+
+model DeviceEvent {
+  id           String          @id @default(uuid()) @db.Uuid
+  deviceId     String          @map("device_id") @db.Uuid
+  refillSlotId String?         @map("refill_slot_id") @db.Uuid
+  eventType    DeviceEventType @map("event_type")
+  payload      Json?
+  createdAt    DateTime        @default(now()) @map("created_at")
+
+  device Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  slot   RefillSlot? @relation(fields: [refillSlotId], references: [id], onDelete: SetNull)
+
+  @@index([deviceId, createdAt])
+  @@map("device_events")
+}
+
+model Alert {
+  id           String    @id @default(uuid()) @db.Uuid
+  patientId    String    @map("patient_id") @db.Uuid
+  deviceId     String?   @map("device_id") @db.Uuid
+  refillSlotId String?   @map("refill_slot_id") @db.Uuid
+  type         AlertType
+  title        String
+  desc         String
+  resolved     Boolean   @default(false)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  resolvedAt   DateTime? @map("resolved_at")
+
+  patient Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  device  Device?     @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  slot    RefillSlot? @relation(fields: [refillSlotId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, resolved])
+  @@map("alerts")
+}

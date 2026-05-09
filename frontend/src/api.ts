@@ -1,4 +1,4 @@
-import type { AlertItem, Caregiver, DashboardData, HistoryEvent, Medication, Patient, PatientPreference, Session } from './types';
+import type { AlertItem, Caregiver, DashboardData, HistoryEvent, Medication, Patient, PatientPreference, RefillPlan, Session } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -16,15 +16,9 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, token?: st
   const headers = new Headers(options.headers || {});
   headers.set('Content-Type', 'application/json');
 
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
+  if (token) headers.set('Authorization', `Bearer ${token}`);
 
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-  });
-
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
   const text = await response.text();
   const payload = text ? JSON.parse(text) : null;
 
@@ -37,24 +31,15 @@ async function apiRequest<T>(path: string, options: RequestInit = {}, token?: st
 
 export const api = {
   registerCaregiver(data: { name: string; email: string; phone: string; password: string }) {
-    return apiRequest<Session>('/api/auth/caregiver/register', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return apiRequest<Session>('/api/auth/caregiver/register', { method: 'POST', body: JSON.stringify(data) });
   },
 
   loginCaregiver(data: { email: string; password: string }) {
-    return apiRequest<Session>('/api/auth/caregiver/login', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return apiRequest<Session>('/api/auth/caregiver/login', { method: 'POST', body: JSON.stringify(data) });
   },
 
   loginPatient(data: { caregiverPhone: string; pin: string }) {
-    return apiRequest<Session>('/api/auth/patient/login', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return apiRequest<Session>('/api/auth/patient/login', { method: 'POST', body: JSON.stringify(data) });
   },
 
   getPatients(token: string) {
@@ -62,10 +47,7 @@ export const api = {
   },
 
   createPatient(token: string, data: { name: string; relationship: string; pin: string }) {
-    return apiRequest<Patient>('/api/patients', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }, token);
+    return apiRequest<Patient>('/api/patients', { method: 'POST', body: JSON.stringify(data) }, token);
   },
 
   getDashboard(token: string, patientId: string) {
@@ -79,14 +61,30 @@ export const api = {
   createMedication(token: string, patientId: string, data: {
     name: string;
     dosage: string;
+    instructions?: string;
     firstDoseTime: string;
     frequencyHours: number;
-    compartment: number;
     isCritical: boolean;
   }) {
-    return apiRequest<Medication>(`/api/patients/${patientId}/medications`, {
+    return apiRequest<Medication>(`/api/patients/${patientId}/medications`, { method: 'POST', body: JSON.stringify(data) }, token);
+  },
+
+  deleteMedication(token: string, patientId: string, medicationId: string) {
+    return apiRequest<void>(`/api/patients/${patientId}/medications/${medicationId}`, { method: 'DELETE' }, token);
+  },
+
+  getRefillPlan(token: string, patientId: string) {
+    return apiRequest<RefillPlan>(`/api/patients/${patientId}/refill-plan`, {}, token);
+  },
+
+  confirmRefillPlan(token: string, patientId: string) {
+    return apiRequest<{ id: string; status: string }>(`/api/patients/${patientId}/refill-cycles/confirm`, { method: 'POST' }, token);
+  },
+
+  dispenseNext(token: string, patientId: string, refillSlotId?: string) {
+    return apiRequest<{ success: boolean; message: string }>(`/api/patients/${patientId}/dispense`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ refillSlotId }),
     }, token);
   },
 
@@ -103,17 +101,7 @@ export const api = {
   },
 
   updatePreferences(token: string, patientId: string, data: PatientPreference) {
-    return apiRequest<PatientPreference>(`/api/patients/${patientId}/preferences`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }, token);
-  },
-
-  dispense(token: string, data: { patientId: string; compartment: number }) {
-    return apiRequest<{ success: boolean; command: string; angulo: number }>(`/api/dispense`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }, token);
+    return apiRequest<PatientPreference>(`/api/patients/${patientId}/preferences`, { method: 'PUT', body: JSON.stringify(data) }, token);
   },
 };
 

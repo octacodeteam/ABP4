@@ -180,7 +180,7 @@ export default function App() {
 
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard token={token} patientId={selectedPatientId} />;
+        return <Dashboard token={token} patientId={selectedPatientId} role={session.role} />;
       case 'history':
         return <History token={token} patientId={selectedPatientId} />;
       case 'register':
@@ -190,9 +190,9 @@ export default function App() {
       case 'alerts':
         return <Alerts token={token} patientId={selectedPatientId} />;
       case 'profile':
-        return <Profile token={token} patientId={selectedPatientId} />;
+        return <Profile token={token} patientId={selectedPatientId} role={session.role} />;
       default:
-        return <Dashboard token={token} patientId={selectedPatientId} />;
+        return <Dashboard token={token} patientId={selectedPatientId} role={session.role} />;
     }
   };
 

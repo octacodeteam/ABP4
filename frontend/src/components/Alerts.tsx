@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, Bell } from 'lucide-react';
+import { Bell } from 'lucide-react';
 import { api } from '../api';
 import type { AlertItem } from '../types';
 
@@ -19,13 +19,10 @@ function timeAgo(value: string) {
   return new Date(value).toLocaleDateString('pt-BR');
 }
 
-/**
- * Alerts Component: Caregiver view for notifications.
- * Accessibility Features:
- * - High visibility alert cards.
- * - Large icons and text.
- * - Clear distinction between alert types (Warning vs Info).
- */
+function normalizeType(type: string) {
+  return type.toUpperCase();
+}
+
 export default function Alerts({ token, patientId }: Props) {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [error, setError] = useState('');
@@ -41,50 +38,30 @@ export default function Alerts({ token, patientId }: Props) {
     <div className="space-y-6">
       <header className="pb-2">
         <h1 className="text-3xl font-extrabold text-app-primary">Alertas</h1>
-        <p className="text-lg text-app-text-secondary font-medium opacity-70">Central de monitoramento</p>
+        <p className="text-lg text-app-text-secondary font-medium opacity-70">Central de monitoramento real</p>
       </header>
 
       {error && <div className="p-4 bg-red-50 border-2 border-app-danger text-app-danger rounded-2xl font-black">{error}</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {alerts.map((alert, index) => {
-          const isDanger = alert.type === 'danger';
-          const isInfo = alert.type === 'info';
+          const type = normalizeType(String(alert.type));
+          const isDanger = type === 'DANGER';
+          const isInfo = type === 'INFO';
           return (
-            <motion.div 
-              key={alert.id}
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: index * 0.1 }}
-              className="space-y-2"
-            >
+            <motion.div key={alert.id} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: index * 0.06 }} className="space-y-2">
               <div className={`inline-block px-3 py-1 rounded-lg font-bold text-sm border-2 ${
-                isDanger 
-                ? 'bg-red-50 text-app-danger border-app-danger'
-                : isInfo
-                  ? 'bg-blue-50 text-app-primary border-app-primary'
-                  : 'bg-orange-50 text-app-warning border-app-warning'
+                isDanger ? 'bg-red-50 text-app-danger border-app-danger' : isInfo ? 'bg-blue-50 text-app-primary border-app-primary' : 'bg-orange-50 text-app-warning border-app-warning'
               }`}>
                 {isDanger ? '⚠️ ' : isInfo ? 'ℹ️ ' : '🔔 '}{alert.title}
               </div>
               
-              <div className={`p-6 rounded-3xl border-2 bg-app-card flex-1 shadow-sm ${
-                isDanger ? 'border-app-danger' : isInfo ? 'border-app-primary' : 'border-app-warning'
-              }`}>
-                <p className="text-app-text-primary font-bold text-xl leading-tight mb-4">
-                  {alert.desc}
-                </p>
+              <div className={`p-6 rounded-3xl border-2 bg-app-card flex-1 shadow-sm ${isDanger ? 'border-app-danger' : isInfo ? 'border-app-primary' : 'border-app-warning'}`}>
+                <p className="text-app-text-primary font-bold text-xl leading-tight mb-4">{alert.desc}</p>
                 <p className="text-sm font-black uppercase tracking-widest text-app-text-secondary mb-4">{timeAgo(alert.createdAt)}</p>
-                {isDanger && (
-                  <button className="w-full p-4 bg-app-danger text-white rounded-2xl font-black text-lg shadow-lg active:bg-red-700 transition-colors">
-                    Ligar para ele
-                  </button>
-                )}
-                {!isDanger && (
-                  <button className={`w-full p-4 border-2 rounded-2xl font-black text-lg active:bg-orange-50 transition-colors ${isInfo ? 'border-app-primary text-app-primary' : 'border-app-warning text-app-warning'}`}>
-                    Ver detalhes
-                  </button>
-                )}
+                <button className={`w-full p-4 border-2 rounded-2xl font-black text-lg transition-colors ${isDanger ? 'border-app-danger text-app-danger' : isInfo ? 'border-app-primary text-app-primary' : 'border-app-warning text-app-warning'}`}>
+                  Ver detalhes
+                </button>
               </div>
             </motion.div>
           );
