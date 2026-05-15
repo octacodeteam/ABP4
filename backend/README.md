@@ -47,6 +47,7 @@ npm run dev
 - POST /api/patients/:patientId/dispense
 - GET /api/patients/:patientId/history
 - GET /api/patients/:patientId/alerts
+- PATCH /api/alerts/:alertId/resolve
 - GET /api/patients/:patientId/preferences
 - PUT /api/patients/:patientId/preferences
 

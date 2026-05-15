@@ -424,7 +424,7 @@ async function buildDashboard(patientId: string) {
       warning: null,
     } : preview,
     medicationsCount,
-    alertsCount: alerts.filter((alert) => alert.type !== 'INFO').length,
+    alertsCount: alerts.filter((alert: any) => alert.type !== 'INFO').length,
   };
 }
 
@@ -587,7 +587,7 @@ app.post('/api/auth/patient/login', async (req: Request, res: Response, next: Ne
     }
 
     const patients = await prisma.patient.findMany({ where: { caregiverId: caregiver.id } });
-    const patient = patients.find((item) => verifySecret(pin, item.pinHash));
+    const patient = patients.find((item: any) => verifySecret(pin, item.pinHash));
 
     if (!patient) {
       res.status(401).json({ message: 'Telefone do cuidador ou PIN inválido.' });
@@ -652,7 +652,7 @@ app.post('/api/patients', requireAuth, requireCaregiver, async (req: Request, re
     }
 
     const existingPatients = await prisma.patient.findMany({ where: { caregiverId: req.auth!.caregiverId! } });
-    const duplicatedPin = existingPatients.some((patient) => verifySecret(pin, patient.pinHash));
+    const duplicatedPin = existingPatients.some((patient: any) => verifySecret(pin, patient.pinHash));
     if (duplicatedPin) {
       res.status(409).json({ message: 'Este cuidador já possui um paciente com este PIN. Escolha outro PIN.' });
       return;
@@ -748,6 +748,15 @@ app.delete('/api/patients/:patientId/medications/:medicationId', requireAuth, re
     const medicationId = getRouteParam(req.params.medicationId);
     if (!(await assertPatientAccess(req, res, patientId))) return;
 
+    // Segurança: além de validar o paciente, conferimos se o medicamento pertence
+    // realmente a esse paciente. Assim um cuidador não consegue inativar remédio
+    // de outro paciente apenas chutando um medicationId.
+    const medication = await prisma.medication.findFirst({ where: { id: medicationId, patientId } });
+    if (!medication) {
+      res.status(404).json({ message: 'Medicamento não encontrado para este paciente.' });
+      return;
+    }
+
     await prisma.medication.update({
       where: { id: medicationId },
       data: { active: false },
@@ -787,7 +796,7 @@ app.post('/api/patients/:patientId/refill-cycles/confirm', requireAuth, requireC
 
     const device = await getOrCreateDefaultDevice(patientId);
 
-    const cycle = await prisma.$transaction(async (tx) => {
+    const cycle = await prisma.$transaction(async (tx: any) => {
       await tx.refillCycle.updateMany({
         where: { patientId, status: 'ACTIVE' },
         data: { status: 'CANCELLED' },
@@ -903,7 +912,7 @@ app.get('/api/patients/:patientId/history', requireAuth, async (req: Request, re
       include: { items: { include: { medication: true } }, cycle: true },
     });
 
-    res.json(slots.map((slot) => ({
+    res.json(slots.map((slot: any) => ({
       id: slot.id,
       patientId: slot.patientId,
       refillCycleId: slot.refillCycleId,
@@ -914,13 +923,13 @@ app.get('/api/patients/:patientId/history', requireAuth, async (req: Request, re
       confirmedAt: slot.confirmedAt,
       status: slot.status,
       statusLabel: mapSlotStatus(slot.status),
-      items: slot.items.map((item) => ({
+      items: slot.items.map((item: any) => ({
         id: item.id,
         medicationId: item.medicationId,
         name: item.nameSnapshot,
         dosage: item.dosageSnapshot,
       })),
-      itemsText: slot.items.map((item) => item.nameSnapshot).join(' + '),
+      itemsText: slot.items.map((item: any) => item.nameSnapshot).join(' + '),
       createdAt: slot.createdAt,
     })));
   } catch (err) {
@@ -933,6 +942,32 @@ app.get('/api/patients/:patientId/alerts', requireAuth, async (req: Request, res
     const patientId = getRouteParam(req.params.patientId);
     if (!(await assertPatientAccess(req, res, patientId))) return;
     res.json(await buildAlerts(patientId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.patch('/api/alerts/:alertId/resolve', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const alertId = getRouteParam(req.params.alertId);
+
+    // Apenas alertas persistidos na tabela alerts podem ser resolvidos manualmente.
+    // Alertas automáticos, como "sem medicamentos" ou "dispenser offline",
+    // não ficam no banco; eles somem quando a causa é corrigida.
+    const alert = await prisma.alert.findUnique({ where: { id: alertId } });
+    if (!alert) {
+      res.status(404).json({ message: 'Alerta não encontrado ou alerta automático não resolvível.' });
+      return;
+    }
+
+    if (!(await assertPatientAccess(req, res, alert.patientId))) return;
+
+    const updated = await prisma.alert.update({
+      where: { id: alert.id },
+      data: { resolved: true, resolvedAt: new Date() },
+    });
+
+    res.json(updated);
   } catch (err) {
     next(err);
   }

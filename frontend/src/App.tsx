@@ -103,12 +103,47 @@ export default function App() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>('');
   const [loadingPatients, setLoadingPatients] = useState(false);
+  const [validatingSession, setValidatingSession] = useState(Boolean(session?.token));
 
   const token = session?.token || '';
   const isCaregiver = session?.role === 'caregiver';
 
+  // Ao abrir o app, pode existir uma sessão antiga no localStorage.
+  // Antes de mostrar as telas internas, consultamos o backend em /api/me.
+  // Se o token estiver inválido, o usuário volta para a tela de login.
   useEffect(() => {
-    if (!session) return;
+    if (!session?.token) {
+      setValidatingSession(false);
+      return;
+    }
+
+    let cancelled = false;
+    setValidatingSession(true);
+
+    api.getMe(session.token)
+      .then((me) => {
+        if (cancelled) return;
+        const refreshedSession = { ...session, role: me.role, user: me.user } as Session;
+        localStorage.setItem(SESSION_KEY, JSON.stringify(refreshedSession));
+        setSession(refreshedSession);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        localStorage.removeItem(SESSION_KEY);
+        setSession(null);
+      })
+      .finally(() => {
+        if (!cancelled) setValidatingSession(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!session || validatingSession) return;
 
     if (session.role === 'patient') {
       setPatients([session.user as Patient]);
@@ -123,7 +158,7 @@ export default function App() {
         setSelectedPatientId((current) => current || items[0]?.id || '');
       })
       .finally(() => setLoadingPatients(false));
-  }, [session]);
+  }, [session, validatingSession]);
 
   const selectedPatient = useMemo(
     () => patients.find((patient) => patient.id === selectedPatientId) || null,
@@ -195,6 +230,16 @@ export default function App() {
         return <Dashboard token={token} patientId={selectedPatientId} role={session.role} />;
     }
   };
+
+  if (validatingSession) {
+    return (
+      <div className="min-h-screen bg-app-bg font-sans text-app-primary flex items-center justify-center p-6">
+        <div className="bg-app-card border-2 border-app-border rounded-3xl p-8 font-black shadow-xl">
+          Validando sessão com o backend...
+        </div>
+      </div>
+    );
+  }
 
   if (!session) {
     return <AuthShell onAuthenticated={setSession} />;
