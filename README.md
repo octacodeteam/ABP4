@@ -98,7 +98,7 @@ A solução é composta por:
 ## 🔥 Burndown
 
 <p align="center">
-  <img src="https://github.com/octacodeteam/ABP4/blob/main/assets/Burndown_Sprint1.png" alt="Burndown Sprint 1">
+  <img width="733" height="443" alt="Burndown Sprint 1" src="https://github.com/user-attachments/assets/5505c8a2-afd9-4468-a98e-811cf137b094" />
 </p>
 
 > Os gráficos de burndown serão atualizados conforme o andamento das sprints.
