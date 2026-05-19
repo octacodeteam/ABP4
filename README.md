@@ -180,10 +180,11 @@ O projeto está sendo desenvolvido com a **metodologia ágil**, utilizando o fra
 
 | Nome | Função | GitHub |
 |------|--------|--------|
-| Alisson Franco Gritti | Time de Dev | — |
-| Georgia Mantchev | Product Owner | — |
-| Gustavo Henrique Ferreira Hammes | Time de Dev | — |
-| Igor Santos Lima | Time de Dev | — |
+| Alisson Franco Gritti | Time de Dev | <a href="https://github.com/alissonfatec"><img src="https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white"></a> |
+| Breno de Luca | Scrum Master | <a href="https://github.com/brn-lc"><img src="https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white"></a> |
+| Georgia Mantchev | Product Owner | <a href="https://github.com/Mantchev13"><img src="https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white"></a> |
+| Gustavo Henrique Ferreira Hammes | Time de Dev | <a href="https://github.com/GustavoHammes"><img src="https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white"></a> |
+| Igor Santos Lima | Time de Dev | <a href="https://github.com/IgorSantosL"><img src="https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white"></a> |
 
 ---
 
