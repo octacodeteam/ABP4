@@ -3,7 +3,10 @@ import { motion } from 'motion/react';
 import { AlertCircle, CheckCircle2, Clock, Pill, RefreshCw, Wifi, WifiOff, Zap } from 'lucide-react';
 import { api } from '../api';
 import type { DashboardData, Role } from '../types';
+<<<<<<< HEAD
 import { DeviceLiveTest } from './DeviceLiveTest';
+=======
+>>>>>>> 31c33ecbbd8d927a8e05529dac3cf98cbec91175
 
 interface Props {
   token: string;
