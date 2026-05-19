@@ -45,8 +45,8 @@ A solução é composta por:
 
 | Links | Período | Status |
 |:-----:|:-------:|:------:|
-| [Sprint 1](https://github.com/octacodeteam/ABP4/tree/sprint-1) | 13/04/2026 – 30/04/2026 | Em Andamento ⏳ |
-| [Sprint 2](https://github.com/octacodeteam/ABP4/tree/sprint-2) | 04/05/2026 – 21/05/2026 | A Fazer 📝 |
+| [Sprint 1](https://github.com/octacodeteam/ABP4/tree/sprint-1) | 13/04/2026 – 30/04/2026 | Concluído ✅ |
+| [Sprint 2](https://github.com/octacodeteam/ABP4/tree/sprint-2) | 04/05/2026 – 21/05/2026 | Em Andamento ⏳ |
 | [Sprint 3](https://github.com/octacodeteam/ABP4/tree/sprint-3) | 25/05/2026 – 11/06/2026 | A Fazer 📝 |
 
 ---
