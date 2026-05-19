@@ -1,0 +1,33 @@
+name: Node.js CI/CD Pipeline
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v3
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18.x"
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Fazer o Build (TypeScript)
+        run: npm run build
+
+      - name: Rodar Testes Automatizados
+        run: npm test --if-present

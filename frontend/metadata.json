@@ -1,0 +1,6 @@
+{
+  "name": "Remix: MedCare IoT - Dispensador Inteligente",
+  "description": "Interface de gerenciamento para sistema de dispensação de medicamentos IoT, focada em acessibilidade para idosos e cuidadores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
