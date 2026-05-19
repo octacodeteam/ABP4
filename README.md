@@ -56,40 +56,30 @@ A solução é composta por:
 ## 🌲 Backlog do Produto
 
 ### Requisitos Funcionais
-
 | ID | Descrição |
 |:--:|-----------|
-| RF01 | O sistema deve permitir o cadastro de pacientes, cuidadores e médicos. |
-| RF02 | O sistema deve permitir o registro de medicamentos, incluindo nome, dosagem, frequência e duração do tratamento. |
-| RF03 | O aplicativo deve notificar o paciente e o cuidador no horário exato de tomar a medicação. |
-| RF04 | O hardware IoT (ESP32) deve acionar a dispensação física do medicamento de acordo com o cronograma cadastrado no sistema. |
-| RF05 | O sistema deve manter um histórico (log) das dispensações realizadas para acompanhamento de adesão ao tratamento. |
+| RF01 | O sistema deve permitir o cadastro de medicamentos, contendo nome, dosagem, horários e compartimento físico associado. |
+| RF02 | O sistema deve permitir a programação de múltiplos horários e intervalos de administração. |
+| RF03 | O sistema deve permitir o cadastro de um ou mais responsáveis (cuidadores) para gestão remota. |
+| RF04 | O dispositivo IoT deve liberar exclusivamente o compartimento correspondente ao horário e emitir um alerta sonoro. |
+| RF05 | O sistema deve manter o registro de retiradas e notificar o aplicativo do responsável em caso de atraso/falha. |
 
 ### Requisitos Não Funcionais
-
 | ID | Descrição |
 |:--:|-----------|
-| RNF01 | **Pipeline Automatizado (CI/CD):** O projeto deve utilizar GitHub Actions para automação de testes e build. |
-| RNF02 | **Testes Automatizados:** A aplicação deve contar com execução automatizada de testes integrada ao pipeline. |
-| RNF03 | **Deploy Automatizado:** O backend e frontend devem ser implantados em ambiente de nuvem de forma automática. |
-| RNF04 | **Conteinerização:** A solução deve utilizar containers (Docker) para padronização do ambiente de execução e banco de dados. |
-
-### Restrições do Projeto
-
-| ID | Descrição |
-|:--:|-----------|
-| R01 | O escopo do projeto deve ser viável dentro do tempo disponível para o semestre (ABP 4DSM). |
-| R02 | O dispositivo físico IoT pode utilizar simulações ou protótipos em bancada (ESP32), desde que mantenha o modelo conceitual de dispensação. |
+| RNF01 | **Segurança & Nuvem:** A comunicação deve ser segura (JWT/HTTPS/MQTT) e os dados persistidos em nuvem. |
+| RNF02 | **Pipeline Automatizado (CI/CD):** O GitHub Actions deve automatizar o Build, Linter (Qualidade) e Testes. |
+| RNF03 | **Confiabilidade:** O hardware deve possuir armazenamento local/retry para falhas de conexão Wi-Fi e eficiência energética. |
+| RNF04 | **Infraestrutura:** O backend (Node/TS) deve ser conteinerizado via Docker e possuir deploy automatizado. |
 
 ### Estórias de Usuário
-
 | ID | Descrição |
 |:--:|-----------|
-| US01 | Como paciente idoso, quero receber um aviso sonoro no meu dispensador de remédios, para não me esquecer de tomar minha medicação. |
-| US02 | Como cuidador, quero poder cadastrar os horários e doses dos remédios pelo celular, para gerenciar remotamente a saúde do meu familiar. |
-| US03 | Como cuidador, quero receber um alerta caso o medicamento não seja retirado no horário programado, para poder intervir rapidamente. |
-| US04 | Como médico, quero acessar um relatório de adesão ao tratamento, para saber se o paciente está seguindo a receita corretamente. |
-| US05 | Como usuário, quero uma interface com botões grandes e leitura clara, para não ter dificuldades de utilizar o app. |
+| US01 | Como paciente idoso, quero receber um aviso sonoro no meu dispensador para não me esquecer de tomar a medicação. |
+| US02 | Como cuidador, quero cadastrar os remédios e horários pelo celular para gerenciar o tratamento do meu familiar. |
+| US03 | Como cuidador, quero receber uma notificação de alerta se o remédio não for retirado da caixa no tempo limite. |
+| US04 | Como cuidador, quero acessar o histórico de logs do dispensador para acompanhar a adesão ao tratamento. |
+| US05 | Como usuário, quero uma interface com botões grandes e leitura clara, pensada para acessibilidade. |
 
 ---
 
