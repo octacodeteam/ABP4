@@ -3,16 +3,27 @@ import { motion } from 'motion/react';
 import { AlertCircle, CheckCircle2, Clock, Pill, RefreshCw, Wifi, WifiOff, Zap } from 'lucide-react';
 import { api } from '../api';
 import type { DashboardData, Role } from '../types';
-<<<<<<< HEAD
 import { DeviceLiveTest } from './DeviceLiveTest';
-=======
->>>>>>> 31c33ecbbd8d927a8e05529dac3cf98cbec91175
 
 interface Props {
   token: string;
   patientId: string;
   role: Role;
 }
+
+type Esp32State = {
+  deviceCode: string;
+  online: boolean;
+  waitingRemoval: boolean;
+  dosePassed: boolean;
+  doseRemoved: boolean;
+  updatedAt: string;
+  lastEvent?: {
+    type: string;
+    message?: string;
+    receivedAt: string;
+  };
+};
 
 function formatDateTime(value?: string | null) {
   if (!value) return 'Sem comunicação';
@@ -37,8 +48,18 @@ export default function Dashboard({ token, patientId, role }: Props) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loadingAction, setLoadingAction] = useState(false);
+  const [esp32State, setEsp32State] = useState<Esp32State | null>(null);
 
   const isCaregiver = role === 'caregiver';
+
+  const loadEsp32State = async () => {
+  try {
+    const state = await api.getEsp32State('esp32-001');
+    setEsp32State(state);
+  } catch {
+    setEsp32State(null);
+  }
+};
 
   const loadDashboard = async () => {
     setError('');
@@ -50,10 +71,29 @@ export default function Dashboard({ token, patientId, role }: Props) {
     }
   };
 
+  const handleReload = async () => {
+  setError('');
+
+  try {
+    await loadDashboard();
+    await loadEsp32State();
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Erro ao atualizar dashboard.');
+  }
+};
+
   useEffect(() => {
-    setSuccess('');
+  setSuccess('');
+  loadDashboard();
+  loadEsp32State();
+
+  const interval = window.setInterval(() => {
     loadDashboard();
-  }, [patientId]);
+    loadEsp32State();
+  }, 3000);
+
+  return () => window.clearInterval(interval);
+}, [patientId]);
 
   const handleConfirmRefill = async () => {
     setLoadingAction(true);
@@ -71,19 +111,39 @@ export default function Dashboard({ token, patientId, role }: Props) {
   };
 
   const handleDispenseNow = async () => {
-    setLoadingAction(true);
-    setError('');
-    setSuccess('');
-    try {
-      await api.dispenseNext(token, patientId, data?.nextSlot?.id);
-      setSuccess('Comando manual criado. O ESP32 executará quando buscar comandos pendentes.');
-      await loadDashboard();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao enviar comando ao dispenser.');
-    } finally {
-      setLoadingAction(false);
-    }
-  };
+  if (!data?.nextSlot) {
+    setError('Não existe próxima dose para dispensar.');
+    return;
+  }
+
+  const compartment = Number(data.nextSlot.compartment);
+
+  if (!Number.isInteger(compartment) || compartment < 1 || compartment > 8) {
+    setError(`Compartimento inválido recebido do plano: ${data.nextSlot.compartment}`);
+    return;
+  }
+
+  setLoadingAction(true);
+  setError('');
+  setSuccess('');
+
+  try {
+    await api.releaseDoseToEsp32(token, {
+      deviceCode: 'esp32-001',
+      compartment,
+      refillSlotId: data.nextSlot.id,
+    });
+
+    setSuccess(`Comando enviado ao ESP32 para liberar o compartimento ${compartment}.`);
+
+    await loadDashboard();
+    await loadEsp32State();
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Erro ao enviar comando ao ESP32.');
+  } finally {
+    setLoadingAction(false);
+  }
+};
 
   if (error && !data) {
     return <div className="p-6 bg-red-50 border-2 border-app-danger rounded-3xl text-app-danger font-black">{error}</div>;
@@ -94,7 +154,8 @@ export default function Dashboard({ token, patientId, role }: Props) {
   }
 
   const nextSlot = data.nextSlot;
-  const deviceOnline = data.device?.status === 'ONLINE';
+  const deviceOnline = esp32State?.online === true || data.device?.status === 'ONLINE';
+const deviceLastSeen = esp32State?.updatedAt || data.device?.lastSeenAt;
 
   if (!isCaregiver) {
     return (
@@ -154,9 +215,13 @@ export default function Dashboard({ token, patientId, role }: Props) {
           <h1 className="text-3xl font-extrabold text-app-primary">Paciente: {data.patient.name}</h1>
           <p className="text-lg text-app-text-secondary font-medium opacity-70">Controle real do ciclo de 8 compartimentos</p>
         </div>
-        <button onClick={loadDashboard} className="p-3 bg-app-card border-2 border-app-border rounded-2xl text-app-primary">
-          <RefreshCw size={22} />
-        </button>
+        <button
+  type="button"
+  onClick={handleReload}
+  className="p-3 bg-app-card border-2 border-app-border rounded-2xl text-app-primary"
+>
+  <RefreshCw size={22} />
+</button>
       </header>
 
       {error && <div className="p-4 bg-red-50 border-2 border-app-danger text-app-danger rounded-2xl font-black">{error}</div>}
@@ -179,7 +244,15 @@ export default function Dashboard({ token, patientId, role }: Props) {
             {deviceOnline ? <Wifi className="text-app-success" /> : <WifiOff className="text-app-warning" />}
             <p className={`text-2xl font-black ${deviceOnline ? 'text-app-success' : 'text-app-warning'}`}>{deviceOnline ? 'Online' : 'Offline'}</p>
           </div>
-          <p className="text-xs font-bold text-app-text-secondary mt-1">{data.device?.deviceCode || 'Sem dispositivo'} • {formatDateTime(data.device?.lastSeenAt)}</p>
+          <p className="text-xs font-bold text-app-text-secondary mt-1">
+  esp32-001 • {formatDateTime(deviceLastSeen)}
+</p>
+
+{esp32State?.lastEvent && (
+  <p className="text-[10px] font-black text-app-text-secondary mt-2 uppercase">
+    Último evento: {esp32State.lastEvent.type}
+  </p>
+)}
         </div>
       </section>
 

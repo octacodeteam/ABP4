@@ -28,12 +28,8 @@
     "@prisma/client": "^6.19.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-<<<<<<< HEAD
     "express": "^5.2.1",
     "mqtt": "^5.15.1"
-=======
-    "express": "^5.2.1"
->>>>>>> 31c33ecbbd8d927a8e05529dac3cf98cbec91175
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

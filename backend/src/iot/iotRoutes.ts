@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { MqttBridge, DeviceEvent, DeviceState } from './mqttBridge';
+import type { PrismaClient } from '@prisma/client';
 
-export function createIotRouter(mqttBridge: MqttBridge): Router {
+export function createIotRouter(mqttBridge: MqttBridge, prisma: PrismaClient): Router {
   const router = Router();
 
   router.get('/devices', (_req: Request, res: Response) => {
@@ -42,6 +43,69 @@ export function createIotRouter(mqttBridge: MqttBridge): Router {
 
     res.json({ ok: true });
   });
+
+  router.post('/devices/:deviceCode/commands/release-dose', async (req: Request, res: Response) => {
+  try {
+    const { deviceCode } = req.params;
+
+    const refillSlotId =
+      typeof req.body?.refillSlotId === 'string'
+        ? req.body.refillSlotId
+        : undefined;
+
+    let compartment =
+      typeof req.body?.compartment === 'number'
+        ? req.body.compartment
+        : Number(req.body?.compartment);
+
+    /**
+     * Se o frontend não mandar compartment, mas mandar refillSlotId,
+     * o backend busca o compartimento correto no banco.
+     */
+    if ((!Number.isInteger(compartment) || compartment < 1 || compartment > 8) && refillSlotId) {
+      const slot = await prisma.refillSlot.findUnique({
+        where: {
+          id: refillSlotId,
+        },
+        select: {
+          compartmentNumber: true,
+        },
+      });
+
+      if (slot) {
+        compartment = slot.compartmentNumber;
+      }
+    }
+
+    if (!Number.isInteger(compartment) || compartment < 1 || compartment > 8) {
+      res.status(400).json({
+        message: 'Compartimento inválido. Use um número de 1 a 8.',
+      });
+      return;
+    }
+
+    const command = {
+      type: 'RELEASE_DOSE',
+      compartment,
+      refillSlotId,
+      source: 'frontend',
+      sentAt: new Date().toISOString(),
+    };
+
+    mqttBridge.publishCommand(deviceCode, command);
+
+    res.json({
+      ok: true,
+      message: `Comando enviado ao ESP32 para liberar o compartimento ${compartment}.`,
+      deviceCode,
+      command,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error instanceof Error ? error.message : 'Erro ao enviar comando ao ESP32.',
+    });
+  }
+});
 
   router.get('/devices/:deviceCode/events/stream', (req: Request, res: Response) => {
     const { deviceCode } = req.params;

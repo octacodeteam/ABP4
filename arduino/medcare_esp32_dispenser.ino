@@ -1,587 +1,619 @@
 // ============================================================================
-//  MedCare IoT - ESP32 + NEMA 17 + A4988
-//  Projeto ABP - Dispenser automático de remédios com 8 compartimentos
+// MedCare IoT - ESP32 + 28BYJ-48 + 2 IR + Buzzer + LCD I2C + MQTT
 // ============================================================================
 //
-//  IMPORTANTE SOBRE A NOVA REGRA DO SISTEMA
-//  ----------------------------------------
-//  O compartimento NÃO representa um remédio fixo.
-//  O compartimento representa uma DOSAGEM/HORÁRIO calculada pelo backend.
+// Ligações usadas:
 //
-//  Exemplo físico:
-//  Compartimento 1 -> 06:00 -> Ritalina + Tadalafila
-//  Compartimento 2 -> 10:00 -> Ritalina
-//  Compartimento 3 -> 12:00 -> Tadalafila
+// MOTOR / DRIVER:
+// GPIO17 -> IN1
+// GPIO5  -> IN2
+// GPIO18 -> IN3
+// GPIO19 -> IN4
 //
-//  O cuidador cadastra os remédios no app.
-//  O backend monta o plano de abastecimento.
-//  O ESP32 só precisa saber: qual compartimento liberar e em qual horário.
+// Driver VCC -> +5V da fonte externa
+// Driver GND -> GND da fonte externa
+// Driver GND -> GND do ESP32
+//
+// IR1:
+// VCC -> 3V3
+// GND -> GND
+// OUT -> GPIO34
+//
+// IR2:
+// VCC -> 3V3
+// GND -> GND
+// OUT -> GPIO35
+//
+// Buzzer:
+// + -> GPIO23
+// - -> GND
+//
+// LCD I2C:
+// SDA -> GPIO21
+// SCL -> GPIO22
+// VCC -> 3V3 ou 5V
+// GND -> GND
 //
 // ============================================================================
 
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include "time.h"
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 // ============================================================================
-//  1. CONFIGURAÇÕES DE REDE E BACKEND
+// WI-FI E MQTT
 // ============================================================================
 
-const char* WIFI_SSID = "NOME_DA_REDE";
-const char* WIFI_PASSWORD = "SENHA_DA_REDE";
+const char* WIFI_SSID = "CLARO_2GF963B4";
+const char* WIFI_PASSWORD = "1FF963B4";
 
-// URL do backend Express. Em teste local, use o IP do computador na rede.
-// Exemplo: "http://192.168.0.10:3001/api"
-const char* API_BASE_URL = "http://192.168.0.10:3001/api";
+const char* MQTT_HOST = "broker.hivemq.com";
+const int MQTT_PORT = 1883;
 
-// Deve bater com o deviceCode criado no backend para o paciente.
-// O primeiro paciente criado recebe, por padrão, o dispositivo esp32-001.
+const char* MQTT_TOPIC_PREFIX = "medcare/abp4/grupo01";
 const char* DEVICE_CODE = "esp32-001";
 
-// Deve bater com DEFAULT_DEVICE_TOKEN do backend/.env.
-// Para ABP local, estamos usando "123".
-const char* DEVICE_TOKEN = "123";
-
 // ============================================================================
-//  2. NTP - HORÁRIO LOCAL
+// PINOS
 // ============================================================================
 
-const char* NTP_SERVER = "pool.ntp.org";
-const long GMT_OFFSET_SEC = -10800; // Brasil UTC-3
-const int DAYLIGHT_OFFSET_SEC = 0;
+// Ordem ajustada conforme seu teste físico.
+// Seu motor funcionou com IN1/IN4 e IN2/IN3 trocados.
+#define MOTOR_IN1 17
+#define MOTOR_IN2 5
+#define MOTOR_IN3 18
+#define MOTOR_IN4 19
 
-// ============================================================================
-//  3. HARDWARE CONFORME A IMAGEM DO DISPENSER
-// ============================================================================
+#define IR_PASSAGEM_PIN 34
+#define IR_RETIRADA_PIN 35
 
-#define NUM_COMPARTIMENTOS 8
-
-// Driver A4988 / DRV8825 para motor NEMA 17
-#define STEP_PIN 18
-#define DIR_PIN 19
-#define ENABLE_PIN 21
-
-// Sensor infravermelho no funil/coletor.
-// Ajuste conforme seu módulo: muitos sensores retornam LOW quando detectam.
-#define IR_SENSOR_PIN 34
-#define IR_DETECTED_LEVEL LOW
-
-// Sensor de som/microfone opcional. Para simplificar, fica como redundância.
-#define MIC_SENSOR_PIN 35
-
-// LED e buzzer de alerta
-#define LED_PIN 2
 #define BUZZER_PIN 23
 
-// Sensor de posição zero opcional. Se não existir, deixe -1.
-// Recomendado fisicamente para homing. Sem ele, posicione manualmente no C1.
-#define HOME_SENSOR_PIN -1
-
-// Motor comum NEMA 17: 200 passos por volta.
-// Se o A4988 estiver em 1/16 microstep: 200 * 16 = 3200 micropassos/volta.
-#define STEPS_PER_REVOLUTION 3200
-#define STEPS_PER_COMPARTMENT (STEPS_PER_REVOLUTION / NUM_COMPARTIMENTOS) // 400
-
-// Velocidade do motor. Quanto menor o delay, mais rápido o motor gira.
-#define STEP_DELAY_MICROS 900
+// LCD I2C.
+// Se não funcionar com 0x27, troque para 0x3F.
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // ============================================================================
-//  4. TEMPORIZAÇÃO
+// CONFIGURAÇÕES
 // ============================================================================
 
-#define HEARTBEAT_INTERVAL_MS 30000
-#define SYNC_CYCLE_INTERVAL_MS 60000
-#define COMMAND_POLL_INTERVAL_MS 10000
-#define DOSE_DETECTION_TIMEOUT_MS 30000
-#define SCHEDULE_CHECK_INTERVAL_MS 1000
+// 28BYJ-48 em meio passo costuma usar ~4096 passos por volta.
+#define STEPS_PER_REVOLUTION 4096
+
+// Seu disco tem 8 posições.
+#define NUM_COMPARTIMENTOS 8
+
+// Cada compartimento corresponde a 1/8 de volta.
+#define STEPS_PER_COMPARTMENT (STEPS_PER_REVOLUTION / NUM_COMPARTIMENTOS)
+
+// Se o motor vibrar ou perder força, aumente para 4, 5, 6 ou 8.
+#define STEP_DELAY_MS 3
+
+// A maioria dos sensores IR fica LOW quando detecta.
+// Se ficar invertido, troque LOW por HIGH.
+#define IR_DETECTED_LEVEL LOW
+
+#define IR_DEBOUNCE_MS 250
+#define BUZZER_TIME_MS 350
+
+#define WIFI_RETRY_INTERVAL_MS 5000
+#define MQTT_RETRY_INTERVAL_MS 5000
+#define HEARTBEAT_INTERVAL_MS 10000
+
+// true = ao ligar, o motor gira 1 compartimento para teste.
+// false = motor só gira por comando MQTT.
+#define ENABLE_STARTUP_MOTOR_TEST true
 
 // ============================================================================
-//  5. ESTRUTURAS DO CICLO ATIVO
+// SEQUÊNCIA DO MOTOR
 // ============================================================================
 
-struct SlotDose {
-  String slotId;
-  int compartment;       // 1 a 8
-  int hour;              // 0 a 23
-  int minute;            // 0 a 59
-  String scheduledTime;  // HH:MM
-  String status;         // PENDING, COMMAND_SENT, RELEASED...
-  String itemsText;      // Ex: Ritalina + Tadalafila
-  bool executed;         // Evita liberar duas vezes no mesmo ciclo em RAM
+int stepSequence[8][4] = {
+  {1, 0, 0, 0},
+  {1, 1, 0, 0},
+  {0, 1, 0, 0},
+  {0, 1, 1, 0},
+  {0, 0, 1, 0},
+  {0, 0, 1, 1},
+  {0, 0, 0, 1},
+  {1, 0, 0, 1}
 };
 
-#define MAX_SLOTS 8
-SlotDose slots[MAX_SLOTS];
-int totalSlots = 0;
-String activeCycleId = "";
-
-int currentCompartment = 1; // assumimos início no compartimento 1
-unsigned long lastHeartbeat = 0;
-unsigned long lastCycleSync = 0;
-unsigned long lastCommandPoll = 0;
-unsigned long lastScheduleCheck = 0;
-
 // ============================================================================
-//  6. FUNÇÕES DE TEMPO
+// ESTADOS
 // ============================================================================
 
-bool getCurrentHourMinute(int &hour, int &minute) {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("[NTP] Falha ao obter horário atual.");
-    return false;
-  }
-  hour = timeinfo.tm_hour;
-  minute = timeinfo.tm_min;
-  return true;
-}
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
 
-bool parseHHMM(const String& value, int &hour, int &minute) {
-  if (value.length() < 5) return false;
-  hour = value.substring(0, 2).toInt();
-  minute = value.substring(3, 5).toInt();
-  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
-}
+bool aguardandoRetirada = false;
+bool buzzerLigado = false;
+
+unsigned long buzzerInicioMs = 0;
+unsigned long lastWifiTryMs = 0;
+unsigned long lastMqttTryMs = 0;
+unsigned long lastHeartbeatMs = 0;
+unsigned long lastIrPassagemMs = 0;
+unsigned long lastIrRetiradaMs = 0;
+unsigned long eventSequence = 0;
+
+int currentCompartment = 1;
 
 // ============================================================================
-//  7. WI-FI
+// LCD
 // ============================================================================
 
-void connectWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
+void showLcd(String line1, String line2) {
+  lcd.clear();
 
-  Serial.printf("[WiFi] Conectando em %s", WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  lcd.setCursor(0, 0);
+  lcd.print(line1.substring(0, 16));
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WiFi] Conectado.");
-    Serial.print("[WiFi] IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\n[WiFi] Não conectado. Tentará novamente no loop.");
-  }
+  lcd.setCursor(0, 1);
+  lcd.print(line2.substring(0, 16));
 }
 
 // ============================================================================
-//  8. HTTP AUXILIAR
+// MOTOR
 // ============================================================================
 
-void addDeviceHeaders(HTTPClient &http) {
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-Token", DEVICE_TOKEN);
+void setMotorStep(int index) {
+  digitalWrite(MOTOR_IN1, stepSequence[index][0]);
+  digitalWrite(MOTOR_IN2, stepSequence[index][1]);
+  digitalWrite(MOTOR_IN3, stepSequence[index][2]);
+  digitalWrite(MOTOR_IN4, stepSequence[index][3]);
 }
 
-String deviceUrl(const String& path) {
-  return String(API_BASE_URL) + "/device/" + DEVICE_CODE + path;
+void desligarMotor() {
+  digitalWrite(MOTOR_IN1, LOW);
+  digitalWrite(MOTOR_IN2, LOW);
+  digitalWrite(MOTOR_IN3, LOW);
+  digitalWrite(MOTOR_IN4, LOW);
 }
 
-// ============================================================================
-//  9. MOTOR DE PASSO / CARROSSEL
-// ============================================================================
+void girarPassos(int passos, bool horario) {
+  for (int i = 0; i < passos; i++) {
+    int index;
 
-void enableMotor(bool enable) {
-  // A4988 normalmente habilita com LOW e desabilita com HIGH.
-  digitalWrite(ENABLE_PIN, enable ? LOW : HIGH);
-}
+    if (horario) {
+      index = i % 8;
+    } else {
+      index = 7 - (i % 8);
+    }
 
-void stepMotor(long steps, bool clockwise) {
-  digitalWrite(DIR_PIN, clockwise ? HIGH : LOW);
-  enableMotor(true);
-
-  for (long i = 0; i < steps; i++) {
-    digitalWrite(STEP_PIN, HIGH);
-    delayMicroseconds(STEP_DELAY_MICROS);
-    digitalWrite(STEP_PIN, LOW);
-    delayMicroseconds(STEP_DELAY_MICROS);
+    setMotorStep(index);
+    delay(STEP_DELAY_MS);
   }
 
-  enableMotor(false);
+  desligarMotor();
 }
 
-void rotateToCompartment(int targetCompartment) {
+void girarUmCompartimento() {
+  Serial.println("[MOTOR] Girando 1 compartimento.");
+
+  showLcd("Liberando dose", "Motor girando");
+
+  girarPassos(STEPS_PER_COMPARTMENT, true);
+
+  currentCompartment++;
+
+  if (currentCompartment > NUM_COMPARTIMENTOS) {
+    currentCompartment = 1;
+  }
+
+  Serial.print("[MOTOR] Compartimento atual: ");
+  Serial.println(currentCompartment);
+
+  showLcd("Dose liberada", "Aguardando IR1");
+}
+
+void girarParaCompartimento(int targetCompartment) {
   if (targetCompartment < 1 || targetCompartment > NUM_COMPARTIMENTOS) {
-    Serial.printf("[MOTOR] Compartimento inválido: %d\n", targetCompartment);
+    girarUmCompartimento();
     return;
   }
 
   int delta = targetCompartment - currentCompartment;
-  if (delta < 0) delta += NUM_COMPARTIMENTOS;
 
-  long steps = (long)delta * STEPS_PER_COMPARTMENT;
-
-  Serial.printf("[MOTOR] Atual C%d -> Alvo C%d | Delta=%d | Steps=%ld\n", currentCompartment, targetCompartment, delta, steps);
-
-  if (steps > 0) {
-    stepMotor(steps, true);
+  if (delta < 0) {
+    delta += NUM_COMPARTIMENTOS;
   }
+
+  Serial.print("[MOTOR] Indo do compartimento ");
+  Serial.print(currentCompartment);
+  Serial.print(" para ");
+  Serial.println(targetCompartment);
+
+  showLcd("Movendo para", "Comp " + String(targetCompartment));
+
+  girarPassos(delta * STEPS_PER_COMPARTMENT, true);
 
   currentCompartment = targetCompartment;
+
+  showLcd("Dose liberada", "Aguardando IR1");
 }
 
-void runHomingIfAvailable() {
-  if (HOME_SENSOR_PIN < 0) {
-    Serial.println("[HOMING] Sem sensor de home. Posicione manualmente no compartimento 1 antes de ligar.");
-    currentCompartment = 1;
+// ============================================================================
+// BUZZER
+// ============================================================================
+
+void ligarBuzzer() {
+  tone(BUZZER_PIN, 3000);
+  buzzerLigado = true;
+  buzzerInicioMs = millis();
+}
+
+void desligarBuzzerSeNecessario() {
+  if (buzzerLigado && millis() - buzzerInicioMs >= BUZZER_TIME_MS) {
+    noTone(BUZZER_PIN);
+    buzzerLigado = false;
+  }
+}
+
+// ============================================================================
+// MQTT - TÓPICOS
+// ============================================================================
+
+String topicEvents() {
+  return String(MQTT_TOPIC_PREFIX) + "/" + DEVICE_CODE + "/events";
+}
+
+String topicStatus() {
+  return String(MQTT_TOPIC_PREFIX) + "/" + DEVICE_CODE + "/status";
+}
+
+String topicCommands() {
+  return String(MQTT_TOPIC_PREFIX) + "/" + DEVICE_CODE + "/commands";
+}
+
+// ============================================================================
+// MQTT - PUBLICAÇÃO
+// ============================================================================
+
+void publishJson(String topic, JsonDocument& doc, bool retained = false) {
+  if (!mqttClient.connected()) {
+    Serial.println("[MQTT] Nao conectado. Publicacao ignorada.");
     return;
   }
 
-  pinMode(HOME_SENSOR_PIN, INPUT_PULLUP);
-  enableMotor(true);
-  digitalWrite(DIR_PIN, HIGH);
+  String payload;
+  serializeJson(doc, payload);
 
-  Serial.println("[HOMING] Procurando posição zero...");
-  long maxSteps = STEPS_PER_REVOLUTION + 200;
-  for (long i = 0; i < maxSteps; i++) {
-    if (digitalRead(HOME_SENSOR_PIN) == LOW) {
-      Serial.println("[HOMING] Posição zero encontrada. Definindo compartimento atual como 1.");
-      currentCompartment = 1;
-      enableMotor(false);
-      return;
-    }
-    digitalWrite(STEP_PIN, HIGH);
-    delayMicroseconds(STEP_DELAY_MICROS);
-    digitalWrite(STEP_PIN, LOW);
-    delayMicroseconds(STEP_DELAY_MICROS);
-  }
+  bool ok = mqttClient.publish(topic.c_str(), payload.c_str(), retained);
 
-  enableMotor(false);
-  Serial.println("[HOMING] Não encontrou home. Usando compartimento 1 como referência manual.");
-  currentCompartment = 1;
+  Serial.print("[MQTT] Publicando em ");
+  Serial.print(topic);
+  Serial.print(" -> ");
+  Serial.println(ok ? "OK" : "FALHOU");
+
+  Serial.println(payload);
 }
 
-// ============================================================================
-//  10. BUZZER / LED / SENSOR
-// ============================================================================
+void publishEvent(const char* type, const char* message) {
+  StaticJsonDocument<512> doc;
 
-void beep(int times) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    tone(BUZZER_PIN, 1200, 250);
-    delay(300);
-    digitalWrite(LED_PIN, LOW);
-    delay(200);
-  }
-}
-
-bool doseDetected() {
-  // Sensor IR detecta passagem/queda da dose no funil ou no copo coletor.
-  return digitalRead(IR_SENSOR_PIN) == IR_DETECTED_LEVEL;
-}
-
-bool waitDoseDetection() {
-  unsigned long start = millis();
-  while (millis() - start < DOSE_DETECTION_TIMEOUT_MS) {
-    if (doseDetected()) {
-      Serial.println("[SENSOR] Dose detectada pelo sensor IR.");
-      return true;
-    }
-    delay(100);
-  }
-  Serial.println("[SENSOR] Timeout: dose não detectada.");
-  return false;
-}
-
-// ============================================================================
-//  11. EVENTOS PARA O BACKEND
-// ============================================================================
-
-void sendHeartbeat() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  HTTPClient http;
-  http.begin(deviceUrl("/heartbeat"));
-  addDeviceHeaders(http);
-
-  DynamicJsonDocument doc(256);
+  doc["deviceCode"] = DEVICE_CODE;
+  doc["type"] = type;
+  doc["message"] = message;
+  doc["sequence"] = ++eventSequence;
+  doc["millis"] = millis();
   doc["currentCompartment"] = currentCompartment;
-  doc["firmware"] = "medcare-esp32-nema17-v1";
+  doc["aguardandoRetirada"] = aguardandoRetirada;
+  doc["irPassagem"] = digitalRead(IR_PASSAGEM_PIN);
+  doc["irRetirada"] = digitalRead(IR_RETIRADA_PIN);
 
-  String body;
-  serializeJson(doc, body);
-
-  int code = http.POST(body);
-  Serial.printf("[HTTP] heartbeat -> %d\n", code);
-  http.end();
+  publishJson(topicEvents(), doc, false);
 }
 
-void reportEvent(const String& eventType, const String& refillSlotId, const String& message = "") {
-  if (WiFi.status() != WL_CONNECTED) return;
+void publishStatus(const char* message) {
+  StaticJsonDocument<512> doc;
 
-  HTTPClient http;
-  http.begin(deviceUrl("/events"));
-  addDeviceHeaders(http);
+  doc["deviceCode"] = DEVICE_CODE;
+  doc["status"] = "ONLINE";
+  doc["message"] = message;
+  doc["millis"] = millis();
+  doc["currentCompartment"] = currentCompartment;
+  doc["aguardandoRetirada"] = aguardandoRetirada;
+  doc["irPassagem"] = digitalRead(IR_PASSAGEM_PIN);
+  doc["irRetirada"] = digitalRead(IR_RETIRADA_PIN);
+  doc["freeHeap"] = ESP.getFreeHeap();
 
-  DynamicJsonDocument doc(512);
-  doc["eventType"] = eventType;
-  if (refillSlotId.length() > 0) doc["refillSlotId"] = refillSlotId;
-  doc["payload"]["message"] = message;
-  doc["payload"]["currentCompartment"] = currentCompartment;
-
-  String body;
-  serializeJson(doc, body);
-
-  int code = http.POST(body);
-  Serial.printf("[HTTP] evento %s -> %d\n", eventType.c_str(), code);
-  http.end();
-}
-
-void acknowledgeCommand(const String& commandId, bool ok, const String& errorMessage = "") {
-  if (WiFi.status() != WL_CONNECTED || commandId.length() == 0) return;
-
-  HTTPClient http;
-  http.begin(deviceUrl("/commands/" + commandId + "/ack"));
-  addDeviceHeaders(http);
-
-  DynamicJsonDocument doc(256);
-  doc["ok"] = ok;
-  if (!ok) doc["errorMessage"] = errorMessage;
-
-  String body;
-  serializeJson(doc, body);
-  int code = http.POST(body);
-  Serial.printf("[HTTP] ack comando %s -> %d\n", commandId.c_str(), code);
-  http.end();
+  publishJson(topicStatus(), doc, true);
 }
 
 // ============================================================================
-//  12. SINCRONIZAÇÃO DO CICLO ATIVO
+// SENSORES IR
 // ============================================================================
 
-void clearSlots() {
-  totalSlots = 0;
-  activeCycleId = "";
-  for (int i = 0; i < MAX_SLOTS; i++) {
-    slots[i] = SlotDose();
-  }
-}
+void processarIrPassagem() {
+  int leitura = digitalRead(IR_PASSAGEM_PIN);
 
-void fetchActiveCycle() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  HTTPClient http;
-  http.begin(deviceUrl("/active-cycle"));
-  addDeviceHeaders(http);
-
-  int code = http.GET();
-  Serial.printf("[HTTP] active-cycle -> %d\n", code);
-
-  if (code != 200) {
-    http.end();
+  if (leitura != IR_DETECTED_LEVEL) {
     return;
   }
 
-  String payload = http.getString();
-  DynamicJsonDocument doc(8192);
-  DeserializationError err = deserializeJson(doc, payload);
+  if (millis() - lastIrPassagemMs < IR_DEBOUNCE_MS) {
+    return;
+  }
+
+  lastIrPassagemMs = millis();
+
+  if (aguardandoRetirada) {
+    return;
+  }
+
+  Serial.println("[IR1] Dose passou pelo dispenser.");
+
+  aguardandoRetirada = true;
+
+  ligarBuzzer();
+  showLcd("Dose passou", "Retire no copo");
+
+  publishEvent("DOSE_PASSED_DISPENSER", "Sensor IR 1 detectou passagem da dose.");
+  publishEvent("DOSE_WAITING_REMOVAL", "Dose aguardando retirada.");
+  publishStatus("Dose passou pelo dispenser; aguardando retirada.");
+}
+
+void processarIrRetirada() {
+  int leitura = digitalRead(IR_RETIRADA_PIN);
+
+  if (leitura != IR_DETECTED_LEVEL) {
+    return;
+  }
+
+  if (millis() - lastIrRetiradaMs < IR_DEBOUNCE_MS) {
+    return;
+  }
+
+  lastIrRetiradaMs = millis();
+
+  if (!aguardandoRetirada) {
+    Serial.println("[IR2] Movimento detectado, mas nao havia dose aguardando.");
+    return;
+  }
+
+  Serial.println("[IR2] Dose retirada do recipiente.");
+
+  aguardandoRetirada = false;
+
+  ligarBuzzer();
+  showLcd("Dose retirada", "Obrigado!");
+
+  publishEvent("DOSE_REMOVED_FROM_RECIPIENT", "Sensor IR 2 detectou retirada.");
+  publishStatus("Dose retirada do recipiente.");
+}
+
+// ============================================================================
+// COMANDOS MQTT
+// ============================================================================
+
+void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
+  String body;
+
+  for (unsigned int i = 0; i < length; i++) {
+    body += (char)payload[i];
+  }
+
+  Serial.print("[MQTT] Comando recebido em ");
+  Serial.print(topic);
+  Serial.print(": ");
+  Serial.println(body);
+
+  StaticJsonDocument<512> doc;
+  DeserializationError err = deserializeJson(doc, body);
+
   if (err) {
-    Serial.println("[JSON] Erro lendo active-cycle.");
-    http.end();
+    Serial.println("[MQTT] JSON invalido no comando.");
     return;
   }
 
-  bool active = doc["active"] | false;
-  if (!active) {
-    Serial.println("[CICLO] Nenhum ciclo ativo.");
-    clearSlots();
-    http.end();
+  const char* type = doc["type"] | "";
+
+  if (strcmp(type, "BUZZER_TEST") == 0) {
+    ligarBuzzer();
+    showLcd("Teste buzzer", "MQTT");
+    publishEvent("BUZZER_TEST_EXECUTED", "Buzzer testado via MQTT.");
     return;
   }
 
-  clearSlots();
-  activeCycleId = doc["cycleId"].as<String>();
+  if (strcmp(type, "RELEASE_DOSE") == 0) {
+    int compartment = doc["compartment"] | 0;
 
-  JsonArray arr = doc["slots"].as<JsonArray>();
-  for (JsonObject item : arr) {
-    if (totalSlots >= MAX_SLOTS) break;
-
-    SlotDose &slot = slots[totalSlots];
-    slot.slotId = item["id"].as<String>();
-    slot.compartment = item["compartment"].as<int>();
-    slot.scheduledTime = item["scheduledTime"].as<String>();
-    slot.status = item["status"].as<String>();
-    slot.itemsText = item["itemsText"].as<String>();
-    slot.executed = slot.status == "TAKEN" || slot.status == "MISSED" || slot.status == "FAILED";
-    parseHHMM(slot.scheduledTime, slot.hour, slot.minute);
-
-    Serial.printf("[CICLO] Slot %s | C%d | %s | %s\n", slot.slotId.c_str(), slot.compartment, slot.scheduledTime.c_str(), slot.itemsText.c_str());
-    totalSlots++;
-  }
-
-  http.end();
-}
-
-// ============================================================================
-//  13. EXECUÇÃO DE DOSE
-// ============================================================================
-
-void executeSlot(SlotDose &slot, bool manual) {
-  Serial.printf("[DOSE] Liberando C%d | %s | %s\n", slot.compartment, slot.scheduledTime.c_str(), slot.itemsText.c_str());
-
-  rotateToCompartment(slot.compartment);
-  reportEvent("SLOT_RELEASED", slot.slotId, manual ? "Liberação manual" : "Liberação por horário");
-
-  beep(3);
-
-  bool detected = waitDoseDetection();
-  if (detected) {
-    reportEvent("DOSE_TAKEN", slot.slotId, "Dose detectada/retirada.");
-    slot.status = "TAKEN";
-  } else {
-    reportEvent("DOSE_MISSED", slot.slotId, "Sensor não confirmou retirada dentro do tempo.");
-    slot.status = "MISSED";
-  }
-
-  slot.executed = true;
-}
-
-void checkScheduledSlots() {
-  int hour, minute;
-  if (!getCurrentHourMinute(hour, minute)) return;
-
-  for (int i = 0; i < totalSlots; i++) {
-    SlotDose &slot = slots[i];
-    if (slot.executed) continue;
-    if (slot.status != "PENDING" && slot.status != "COMMAND_SENT" && slot.status != "RELEASED") continue;
-
-    if (slot.hour == hour && slot.minute == minute) {
-      executeSlot(slot, false);
-      return;
+    if (compartment >= 1 && compartment <= NUM_COMPARTIMENTOS) {
+      girarParaCompartimento(compartment);
+    } else {
+      girarUmCompartimento();
     }
+
+    publishEvent("DOSE_RELEASE_COMMAND_EXECUTED", "Motor executou liberacao de dose.");
+    return;
   }
+
+  if (strcmp(type, "CONFIRM_REMOVAL") == 0) {
+    aguardandoRetirada = false;
+
+    ligarBuzzer();
+    showLcd("Retirada", "confirmada app");
+
+    publishEvent("DOSE_REMOVED_FROM_RECIPIENT", "Retirada confirmada pelo aplicativo.");
+    publishStatus("Retirada confirmada pelo aplicativo.");
+    return;
+  }
+
+  Serial.println("[MQTT] Comando desconhecido.");
 }
 
 // ============================================================================
-//  14. COMANDOS MANUAIS DO BACKEND
+// WI-FI
 // ============================================================================
 
-void pollNextCommand() {
-  if (WiFi.status() != WL_CONNECTED) return;
+void ensureWifiConnected() {
+  static bool wifiStartRequested = false;
+  static unsigned long wifiStartRequestedAt = 0;
 
-  HTTPClient http;
-  http.begin(deviceUrl("/commands/next"));
-  addDeviceHeaders(http);
+  if (WiFi.status() == WL_CONNECTED) {
+    if (wifiStartRequested) {
+      Serial.println("[WiFi] Conectado.");
+      Serial.print("[WiFi] IP: ");
+      Serial.println(WiFi.localIP());
 
-  int code = http.GET();
-  if (code != 200) {
-    Serial.printf("[HTTP] commands/next -> %d\n", code);
-    http.end();
-    return;
-  }
-
-  String payload = http.getString();
-  DynamicJsonDocument doc(2048);
-  if (deserializeJson(doc, payload)) {
-    http.end();
-    return;
-  }
-
-  bool hasCommand = doc["hasCommand"] | false;
-  if (!hasCommand) {
-    http.end();
-    return;
-  }
-
-  JsonObject command = doc["command"];
-  String commandId = command["id"].as<String>();
-  JsonObject commandPayload = command["payload"];
-
-  int compartment = commandPayload["compartment"].as<int>();
-  String refillSlotId = commandPayload["refillSlotId"].as<String>();
-
-  Serial.printf("[COMANDO] Manual: %s -> C%d\n", commandId.c_str(), compartment);
-
-  bool found = false;
-  for (int i = 0; i < totalSlots; i++) {
-    if (slots[i].slotId == refillSlotId) {
-      executeSlot(slots[i], true);
-      found = true;
-      break;
+      showLcd("WiFi conectado", WiFi.localIP().toString());
     }
+
+    wifiStartRequested = false;
+    return;
   }
 
-  if (!found) {
-    // Mesmo se o slot não estiver no cache, executa o compartimento solicitado.
-    SlotDose temp;
-    temp.slotId = refillSlotId;
-    temp.compartment = compartment;
-    temp.scheduledTime = "manual";
-    temp.itemsText = "Dose manual";
-    executeSlot(temp, true);
+  if (wifiStartRequested && millis() - wifiStartRequestedAt < 15000) {
+    return;
   }
 
-  acknowledgeCommand(commandId, true);
-  http.end();
+  if (millis() - lastWifiTryMs < WIFI_RETRY_INTERVAL_MS) {
+    return;
+  }
+
+  lastWifiTryMs = millis();
+  wifiStartRequested = true;
+  wifiStartRequestedAt = millis();
+
+  Serial.print("[WiFi] Tentando conectar em: ");
+  Serial.println(WIFI_SSID);
+
+  showLcd("Conectando WiFi", WIFI_SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(false);
+  delay(200);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
 // ============================================================================
-//  15. SETUP E LOOP
+// MQTT - CONEXÃO
+// ============================================================================
+
+void ensureMqttConnected() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  if (mqttClient.connected()) {
+    return;
+  }
+
+  if (millis() - lastMqttTryMs < MQTT_RETRY_INTERVAL_MS) {
+    return;
+  }
+
+  lastMqttTryMs = millis();
+
+  String clientId = String("medcare-") + DEVICE_CODE + "-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+
+  Serial.print("[MQTT] Conectando em ");
+  Serial.print(MQTT_HOST);
+  Serial.print(":");
+  Serial.println(MQTT_PORT);
+
+  showLcd("Conectando MQTT", MQTT_HOST);
+
+  bool connected = mqttClient.connect(clientId.c_str());
+
+  if (!connected) {
+    Serial.print("[MQTT] Falha. Estado: ");
+    Serial.println(mqttClient.state());
+
+    showLcd("MQTT falhou", "state " + String(mqttClient.state()));
+    return;
+  }
+
+  Serial.println("[MQTT] Conectado.");
+
+  showLcd("MQTT conectado", DEVICE_CODE);
+
+  mqttClient.subscribe(topicCommands().c_str());
+
+  Serial.print("[MQTT] Inscrito em: ");
+  Serial.println(topicCommands());
+
+  publishStatus("ESP32 conectado ao MQTT.");
+}
+
+// ============================================================================
+// SETUP
 // ============================================================================
 
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  delay(500);
 
-  pinMode(STEP_PIN, OUTPUT);
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(ENABLE_PIN, OUTPUT);
-  pinMode(IR_SENSOR_PIN, INPUT);
-  pinMode(MIC_SENSOR_PIN, INPUT);
-  pinMode(LED_PIN, OUTPUT);
+  pinMode(MOTOR_IN1, OUTPUT);
+  pinMode(MOTOR_IN2, OUTPUT);
+  pinMode(MOTOR_IN3, OUTPUT);
+  pinMode(MOTOR_IN4, OUTPUT);
+
+  pinMode(IR_PASSAGEM_PIN, INPUT);
+  pinMode(IR_RETIRADA_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
 
-  enableMotor(false);
-  digitalWrite(LED_PIN, LOW);
+  desligarMotor();
+  digitalWrite(BUZZER_PIN, LOW);
 
-  connectWiFi();
-  configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+  Wire.begin(21, 22);
 
-  runHomingIfAvailable();
+  lcd.init();
+  lcd.backlight();
+  showLcd("MedCare IoT", "Iniciando...");
 
-  reportEvent("BOOT", "", "ESP32 iniciado.");
-  sendHeartbeat();
-  fetchActiveCycle();
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
 
-  lastHeartbeat = millis();
-  lastCycleSync = millis();
-  lastCommandPoll = millis();
-  lastScheduleCheck = millis();
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  mqttClient.setCallback(handleMqttMessage);
+  mqttClient.setBufferSize(1024);
 
-  Serial.println("[SISTEMA] MedCare ESP32 pronto.");
+  Serial.println("==========================================");
+  Serial.println("MedCare IoT iniciado.");
+  Serial.println("Comandos MQTT aceitos:");
+  Serial.println("{\"type\":\"BUZZER_TEST\"}");
+  Serial.println("{\"type\":\"RELEASE_DOSE\"}");
+  Serial.println("{\"type\":\"RELEASE_DOSE\", \"compartment\": 3}");
+  Serial.println("{\"type\":\"CONFIRM_REMOVAL\"}");
+  Serial.println("==========================================");
+
+  ensureWifiConnected();
+
+  if (ENABLE_STARTUP_MOTOR_TEST) {
+    delay(3000);
+
+    Serial.println("[TESTE] Girando motor automaticamente ao iniciar.");
+
+    girarUmCompartimento();
+
+    publishEvent("STARTUP_MOTOR_TEST_EXECUTED", "Motor girou automaticamente no inicio.");
+  }
 }
 
+// ============================================================================
+// LOOP
+// ============================================================================
+
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
+  ensureWifiConnected();
+  ensureMqttConnected();
+
+  if (mqttClient.connected()) {
+    mqttClient.loop();
   }
 
-  unsigned long now = millis();
+  processarIrPassagem();
+  processarIrRetirada();
+  desligarBuzzerSeNecessario();
 
-  if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-    sendHeartbeat();
-    lastHeartbeat = now;
+  if (mqttClient.connected() && millis() - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
+    lastHeartbeatMs = millis();
+    publishStatus("Heartbeat do ESP32.");
   }
 
-  if (now - lastCycleSync >= SYNC_CYCLE_INTERVAL_MS) {
-    fetchActiveCycle();
-    lastCycleSync = now;
-  }
-
-  if (now - lastCommandPoll >= COMMAND_POLL_INTERVAL_MS) {
-    pollNextCommand();
-    lastCommandPoll = now;
-  }
-
-  if (now - lastScheduleCheck >= SCHEDULE_CHECK_INTERVAL_MS) {
-    checkScheduledSlots();
-    lastScheduleCheck = now;
-  }
+  delay(20);
 }

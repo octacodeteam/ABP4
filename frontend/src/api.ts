@@ -40,8 +40,10 @@ class ApiError extends Error {
  * 2. adiciona Authorization: Bearer <token> quando a rota precisa de login;
  * 3. transforma erro do backend em mensagem legível para o usuário.
  */
+
 async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(options.headers || {});
+    /** Estado MQTT em tempo real do ESP32. */
 
   // Só colocamos JSON automaticamente quando o body não é FormData.
   // Hoje o projeto usa JSON, mas isso deixa pronto para upload futuro.
@@ -95,6 +97,51 @@ export const api = {
   getDashboard(token: string, patientId: string) {
     return apiRequest<DashboardData>(`/api/patients/${patientId}/dashboard`, {}, token);
   },
+
+  /** Estado MQTT em tempo real do ESP32. */
+getEsp32State(deviceCode = 'esp32-001') {
+  return apiRequest<{
+    deviceCode: string;
+    online: boolean;
+    waitingRemoval: boolean;
+    dosePassed: boolean;
+    doseRemoved: boolean;
+    updatedAt: string;
+    lastEvent?: {
+      type: string;
+      message?: string;
+      receivedAt: string;
+    };
+  } | null>(`/api/iot/devices/${deviceCode}/state`);
+},
+
+  /** Envia comando direto para o ESP32 liberar um compartimento via MQTT. */
+releaseDoseToEsp32(
+  token: string,
+  data: {
+    deviceCode?: string;
+    compartment?: number | string;
+    refillSlotId?: string;
+  }
+) {
+  const deviceCode = data.deviceCode || 'esp32-001';
+
+  return apiRequest<{
+    ok: boolean;
+    message: string;
+    command: unknown;
+  }>(
+    `/api/iot/devices/${deviceCode}/commands/release-dose`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        compartment: data.compartment,
+        refillSlotId: data.refillSlotId,
+      }),
+    },
+    token
+  );
+},
 
   /** Medicamentos. O cuidador não escolhe compartimento; o backend calcula depois. */
   getMedications(token: string, patientId: string) {

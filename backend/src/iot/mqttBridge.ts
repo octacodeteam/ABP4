@@ -145,59 +145,81 @@ export class MqttBridge extends EventEmitter {
   }
 
   private handleStatus(deviceCode: string, raw: unknown): void {
-    const current = this.ensureState(deviceCode);
+  const data = this.asRecord(raw);
 
-    current.online = true;
-    current.lastStatus = raw;
-    current.updatedAt = new Date().toISOString();
+  const current = this.ensureState(deviceCode);
 
-    this.states.set(deviceCode, current);
-    this.emit('state', current);
+  current.online = true;
+  current.lastStatus = raw;
+  current.updatedAt = new Date().toISOString();
+
+  if (typeof data.waitingRemoval === 'boolean') {
+    current.waitingRemoval = data.waitingRemoval;
   }
+
+  if (typeof data.aguardandoRetirada === 'boolean') {
+    current.waitingRemoval = data.aguardandoRetirada;
+  }
+
+  this.states.set(deviceCode, current);
+  this.emit('state', current);
+}
 
   private handleEvent(deviceCode: string, raw: unknown): void {
-    const data = this.asRecord(raw);
+  const data = this.asRecord(raw);
 
-    const event: DeviceEvent = {
-      deviceCode,
-      type: String(data.type ?? 'UNKNOWN'),
-      message: typeof data.message === 'string' ? data.message : undefined,
-      sequence: typeof data.sequence === 'number' ? data.sequence : undefined,
-      millis: typeof data.millis === 'number' ? data.millis : undefined,
-      irState: typeof data.irState === 'number' ? data.irState : undefined,
-      waitingRemoval: typeof data.waitingRemoval === 'boolean' ? data.waitingRemoval : undefined,
-      source: typeof data.source === 'string' ? data.source : undefined,
-      receivedAt: new Date().toISOString(),
-      raw,
-    };
+  const waitingRemovalValue =
+    typeof data.waitingRemoval === 'boolean'
+      ? data.waitingRemoval
+      : typeof data.aguardandoRetirada === 'boolean'
+        ? data.aguardandoRetirada
+        : undefined;
 
-    const current = this.ensureState(deviceCode);
+  const event: DeviceEvent = {
+    deviceCode,
+    type: String(data.type ?? 'UNKNOWN'),
+    message: typeof data.message === 'string' ? data.message : undefined,
+    sequence: typeof data.sequence === 'number' ? data.sequence : undefined,
+    millis: typeof data.millis === 'number' ? data.millis : undefined,
+    irState: typeof data.irState === 'number' ? data.irState : undefined,
+    waitingRemoval: waitingRemovalValue,
+    source: typeof data.source === 'string' ? data.source : undefined,
+    receivedAt: new Date().toISOString(),
+    raw,
+  };
 
-    current.lastEvent = event;
-    current.updatedAt = event.receivedAt;
+  const current = this.ensureState(deviceCode);
 
-    if (event.type === 'DOSE_PASSED_DISPENSER') {
-      current.dosePassed = true;
-      current.doseRemoved = false;
-      current.waitingRemoval = true;
-    }
+  current.online = true;
+  current.lastEvent = event;
+  current.updatedAt = event.receivedAt;
 
-    if (event.type === 'DOSE_WAITING_REMOVAL') {
-      current.waitingRemoval = true;
-    }
-
-    if (event.type === 'DOSE_REMOVED_FROM_RECIPIENT') {
-      current.doseRemoved = true;
-      current.waitingRemoval = false;
-    }
-
-    this.states.set(deviceCode, current);
-
-    this.emit('event', event);
-    this.emit('state', current);
-
-    console.log('[MQTT] Evento recebido:', event);
+  if (event.type === 'DOSE_PASSED_DISPENSER') {
+    current.dosePassed = true;
+    current.doseRemoved = false;
+    current.waitingRemoval = true;
   }
+
+  if (event.type === 'DOSE_WAITING_REMOVAL') {
+    current.waitingRemoval = true;
+  }
+
+  if (event.type === 'DOSE_REMOVED_FROM_RECIPIENT') {
+    current.doseRemoved = true;
+    current.waitingRemoval = false;
+  }
+
+  if (typeof waitingRemovalValue === 'boolean') {
+    current.waitingRemoval = waitingRemovalValue;
+  }
+
+  this.states.set(deviceCode, current);
+
+  this.emit('event', event);
+  this.emit('state', current);
+
+  console.log('[MQTT] Evento recebido:', event);
+}
 
   private ensureState(deviceCode: string): DeviceState {
     return (

@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import { mqttBridge } from './iot/mqttBridge';
 import { createIotRouter } from './iot/iotRoutes';
+import { startDispenseScheduler } from './iot/dispenseScheduler';
+import { markDeviceOnlineFromMqtt, persistEsp32Event } from './iot/iotPersistence';
 
 dotenv.config();
 
@@ -20,7 +22,33 @@ const DEVICE_OFFLINE_AFTER_MINUTES = 5;
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 mqttBridge.connect();
-app.use('/api/iot', createIotRouter(mqttBridge));
+
+mqttBridge.on('state', async (state) => {
+  try {
+    await markDeviceOnlineFromMqtt(
+      prisma,
+      state.deviceCode,
+      state.lastStatus
+    );
+  } catch (error) {
+    console.error('[IOT_DB] Erro ao atualizar estado do dispositivo:', error);
+  }
+});
+
+mqttBridge.on('event', async (event) => {
+  try {
+    await persistEsp32Event(prisma, {
+      deviceCode: event.deviceCode,
+      type: event.type,
+      raw: event.raw,
+    });
+  } catch (error) {
+    console.error('[IOT_DB] Erro ao salvar evento do ESP32:', error);
+  }
+});
+
+startDispenseScheduler(prisma, mqttBridge);
+app.use('/api/iot', createIotRouter(mqttBridge, prisma));
 
 type Role = 'caregiver' | 'patient';
 
