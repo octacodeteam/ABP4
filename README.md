@@ -664,22 +664,3 @@ git push
 ## Equipe
 
 Projeto acadêmico desenvolvido para a ABP4, integrando software web, banco de dados e protótipo físico com ESP32.
-'@ | Set-Content -Path README.md -Encoding UTF8
-
-````
-
-Depois rode:
-
-```powershell
-git status
-git add README.md
-git add .
-git commit -m "Atualiza README e integração IoT"
-git push
-````
-
-Se preferir salvar como `.txt`, rode:
-
-```powershell
-Copy-Item README.md README.txt
-```
