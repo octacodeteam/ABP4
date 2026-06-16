@@ -4,6 +4,9 @@ Sistema integrado para controle de um dispenser automático de medicamentos com 
 
 O projeto permite que o cuidador cadastre medicamentos e horários. O sistema calcula automaticamente o plano de abastecimento dos compartimentos e envia comandos ao ESP32 para liberar a dose no horário correto.
 
+## Link do vídeo
+https://youtu.be/gk5ULvB5E4A
+
 ---
 
 ## Visão geral do projeto
