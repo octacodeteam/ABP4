@@ -117,19 +117,19 @@ npm run dev
 
 O código do dispositivo IoT está na pasta `arduino`. Para utilizá-lo:
 
-* Abra o arquivo `arduino/medcare_esp32_dispenser.ino` na Arduino IDE.
-* Instale as bibliotecas necessárias para ESP32, JSON e comunicação MQTT.
-* Ajuste as credenciais de rede Wi-Fi e os tópicos MQTT no código-fonte antes de realizar o upload para a placa.
+* Abra o arquivo `arduino/medcare_esp32_dispenser.ino` na Arduino IDE;
+* Instale as bibliotecas necessárias para ESP32, JSON e comunicação MQTT;
+* Ajuste as credenciais de rede Wi-Fi e os tópicos MQTT no código-fonte antes de realizar o upload para a placa;
 
 <span id="metodologia"></span>
 
 ## 📚 Metodologia  
 
-O projeto está sendo desenvolvido com a metodologia ágil, utilizando o framework Scrum.
-* 📌 O trabalho é organizado em sprints curtas e incrementais.
-* 👥 O time realiza alinhamentos constantes para garantir qualidade no código.
-* 📝 As tarefas são organizadas no backlog e rastreadas no Trello.
-* ✅ Há um fluxo completo de Integração e Entrega Contínua (CI/CD) com GitHub Actions.
+O projeto está sendo desenvolvido com a metodologia ágil, utilizando o framework Scrum;
+* 📌 O trabalho é organizado em sprints curtas e incrementais;
+* 👥 O time realiza alinhamentos constantes para garantir qualidade no código;
+* 📝 As tarefas são organizadas no backlog e rastreadas no Trello;
+* ✅ Há um fluxo completo de Integração e Entrega Contínua (CI/CD) com GitHub Actions;
 
 ## 📋 Trello
 
